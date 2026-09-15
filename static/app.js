@@ -1223,101 +1223,120 @@ async function createService(event) {
 
     try {
 
-        const data =
-            await api(
-                "/jobs",
-                {
-                    method: "POST",
-                    body: JSON.stringify({
+        const data = await api(
+            "/jobs",
+            {
+                method: "POST",
+                body: JSON.stringify({
 
-                        vehicle_id:
-                            Number(
-                                document.getElementById(
-                                    "intakeVehicleId"
-                                ).value
-                            ),
-
-                        check_in_date:
+                    vehicle_id:
+                        Number(
                             document.getElementById(
-                                "intakeCheckIn"
-                            ).value,
+                                "intakeVehicleId"
+                            ).value
+                        ),
 
-                        expected_delivery_date:
-                            valueOrNull(
-                                document.getElementById(
-                                    "intakeDelivery"
-                                ).value
-                            ),
+                    check_in_date:
+                        document.getElementById(
+                            "intakeCheckIn"
+                        ).value,
 
-                        service_type:
+                    expected_delivery_date:
+                        valueOrNull(
                             document.getElementById(
-                                "intakeServiceType"
-                            ).value,
+                                "intakeDelivery"
+                            ).value
+                        ),
 
-                        complaint:
-                            valueOrNull(
-                                document.getElementById(
-                                    "intakeComplaint"
-                                ).value
-                            ),
+                    service_type:
+                        document.getElementById(
+                            "intakeServiceType"
+                        ).value,
 
-                        damage_details:
-                            valueOrNull(
-                                document.getElementById(
-                                    "intakeDamage"
-                                ).value
-                            ),
+                    complaint:
+                        valueOrNull(
+                            document.getElementById(
+                                "intakeComplaint"
+                            ).value
+                        ),
 
-                        insurance_details:
-                            valueOrNull(
-                                document.getElementById(
-                                    "intakeInsurance"
-                                ).value
-                            ),
+                    damage_details:
+                        valueOrNull(
+                            document.getElementById(
+                                "intakeDamage"
+                            ).value
+                        ),
 
-                        estimate_amount:
-                            Number(
-                                document.getElementById(
-                                    "intakeEstimate"
-                                ).value
-                            ) || 0,
+                    insurance_details:
+                        valueOrNull(
+                            document.getElementById(
+                                "intakeInsurance"
+                            ).value
+                        ),
 
-                        odometer:
-                            numberOrNull(
-                                document.getElementById(
-                                    "intakeOdometer"
-                                ).value
-                            ),
+                    estimate_amount:
+                        Number(
+                            document.getElementById(
+                                "intakeEstimate"
+                            ).value
+                        ) || 0,
 
-                        assigned_executive:
-                            valueOrNull(
-                                document.getElementById(
-                                    "intakeExecutive"
-                                ).value
-                            )
+                    odometer:
+                        numberOrNull(
+                            document.getElementById(
+                                "intakeOdometer"
+                            ).value
+                        ),
 
-                    })
-                }
-            );
+                    assigned_executive:
+                        valueOrNull(
+                            document.getElementById(
+                                "intakeExecutive"
+                            ).value
+                        )
 
+                })
+            }
+        );
+
+        // Service successfully created
         closeModal("serviceModal");
 
-        event.target.reset();
+        if (
+            event.target &&
+            typeof event.target.reset === "function"
+        ) {
+            event.target.reset();
+        }
 
         showToast(
-            `Service started. Token: ${
+            `Service started successfully. Token: ${
                 data.token_number ||
                 data.job?.token_number ||
                 "Generated"
             }`
         );
 
-        await loadAdminJobs();
+        // Refresh admin list.
+        // If only refresh fails, do NOT show "Something went wrong".
+        try {
+
+            await loadAdminJobs();
+
+        } catch (refreshError) {
+
+            console.warn(
+                "Service created successfully, but admin list refresh failed:",
+                refreshError
+            );
+
+        }
 
     } catch (error) {
 
         showToast(
-            error.message,
+            error.message ||
+            "Unable to start service",
             "error"
         );
 
@@ -1476,13 +1495,25 @@ async function openJobUpdate(jobId) {
 
     try {
 
-        const data =
-            await api(
-                `/jobs/${jobId}`
+        // Get all admin jobs
+        // because GET /jobs/{jobId} is not available.
+        const jobs = await api("/jobs");
+
+        const job = Array.isArray(jobs)
+            ? jobs.find(
+                item =>
+                    Number(item.id) ===
+                    Number(jobId)
+            )
+            : null;
+
+        if (!job) {
+
+            throw new Error(
+                "Service job not found"
             );
 
-        const job =
-            data.job;
+        }
 
         document.getElementById(
             "jobUpdateId"
@@ -1500,46 +1531,58 @@ async function openJobUpdate(jobId) {
         document.getElementById(
             "jobStatus"
         ).value =
-            job.status || "Received";
+            job.status ||
+            "Received";
 
         document.getElementById(
             "jobBill"
         ).value =
-            job.bill_amount || 0;
+            job.bill_amount ??
+            0;
 
         document.getElementById(
             "jobPaymentMethod"
         ).value =
-            job.payment_method || "Pending";
+            job.payment_method ||
+            "Pending";
 
         document.getElementById(
             "jobPaymentStatus"
         ).value =
-            job.payment_status || "Pending";
+            job.payment_status ||
+            "Pending";
 
         document.getElementById(
             "jobNextService"
         ).value =
-            job.next_service_date || "";
+            job.next_service_date ||
+            "";
 
         document.getElementById(
             "jobWorkDone"
         ).value =
-            job.work_done || "";
+            job.work_done ||
+            "";
 
         document.getElementById(
             "jobTechnicianNotes"
         ).value =
-            job.technician_notes || "";
+            job.technician_notes ||
+            "";
 
         document
-            .getElementById("jobModal")
-            .classList.remove("hidden");
+            .getElementById(
+                "jobModal"
+            )
+            .classList.remove(
+                "hidden"
+            );
 
     } catch (error) {
 
         showToast(
-            error.message,
+            error.message ||
+            "Unable to open service update",
             "error"
         );
 
