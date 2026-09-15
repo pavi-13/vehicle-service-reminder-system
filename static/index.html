@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>VehicleCare | Service reminders made simple</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <div id="toast" class="toast"></div>
+  <main id="auth-view" class="auth-shell">
+    <section class="brand-panel">
+      <a class="logo" href="/"><span>✦</span> VehicleCare</a>
+      <div class="hero-copy"><p class="eyebrow">SMART SERVICE CARE</p><h1>Every ride deserves <em>perfect care.</em></h1><p>Track service progress, receive due-date reminders, and keep every vehicle record in one calm, clear place.</p></div>
+      <div class="feature-list"><div><b>01</b><span>Live service tracking</span></div><div><b>02</b><span>SMS & email-ready reports</span></div><div><b>03</b><span>24/7 care assistant</span></div></div>
+    </section>
+    <section class="auth-panel">
+      <div class="auth-card">
+        <div class="mobile-logo logo"><span>✦</span> VehicleCare</div>
+        <p class="eyebrow">WELCOME</p><h2 id="auth-title">Welcome back</h2><p id="auth-subtitle">Sign in to manage your vehicles.</p>
+        <div class="tabs"><button class="tab active" data-auth="login">Sign in</button><button class="tab" data-auth="register">Create account</button></div>
+        <form id="login-form" class="auth-form">
+          <label>Email or mobile number<input name="identifier" placeholder="you@email.com or 9876543210" required></label>
+          <label>Password<input name="password" type="password" placeholder="Your password" required></label>
+          <button class="primary-btn" type="submit">Sign in <span>→</span></button>
+          <button class="text-btn" type="button" id="otp-toggle">Use one-time password instead</button>
+        </form>
+        <form id="otp-form" class="auth-form hidden">
+          <label>Email or mobile number<input name="identifier" placeholder="Registered email or number" required></label>
+          <div id="otp-code-wrap" class="hidden"><label>One-time password<input name="code" inputmode="numeric" placeholder="6-digit OTP"></label></div>
+          <button class="primary-btn" type="submit" id="otp-submit">Send OTP <span>→</span></button>
+          <button class="text-btn" type="button" id="password-toggle">Use password instead</button>
+          <p id="otp-help" class="field-help"></p>
+        </form>
+        <form id="register-form" class="auth-form hidden">
+          <label>Full name<input name="name" placeholder="Your name" required></label>
+          <div class="split"><label>Email address<input name="email" type="email" placeholder="Optional"></label><label>Mobile number<input name="phone" inputmode="tel" placeholder="Optional"></label></div>
+          <label>Password<input name="password" type="password" placeholder="Minimum 6 characters" minlength="6" required></label>
+          <button class="primary-btn" type="submit">Create my account <span>→</span></button>
+          <p class="field-help">Enter at least an email or mobile number.</p>
+        </form>
+        <div class="demo-note">Admin demo: <code>admin@vehiclecare.local</code> · <code>Admin@123</code></div>
+      </div>
+    </section>
+  </main>
+
+  <main id="app-view" class="app-shell hidden">
+    <aside class="sidebar">
+      <a class="logo" href="/"><span>✦</span> VehicleCare</a>
+      <p class="workspace-label" id="workspace-label">MY GARAGE</p>
+      <nav id="nav"><button class="nav-item active" data-page="overview"><i>⌂</i> Overview</button><button class="nav-item" data-page="vehicles"><i>▣</i> My vehicles</button><button class="nav-item" data-page="services"><i>◌</i> My service</button><button class="nav-item" data-page="reminders"><i>◷</i> Reminders</button><button class="nav-item" data-page="feedback"><i>☆</i> Feedback</button><button class="nav-item admin-nav hidden" data-page="admin"><i>⚙</i> Service desk</button></nav>
+      <div class="side-bottom"><div class="user-chip"><div id="avatar">V</div><span><b id="user-name">User</b><small id="user-role">Customer</small></span></div><button id="logout" class="logout">Log out →</button></div>
+    </aside>
+    <section class="content"><header class="topbar"><div><p class="eyebrow" id="page-kicker">GOOD TO SEE YOU</p><h1 id="page-title">Your garage at a glance</h1></div><div class="top-actions"><button class="bell" id="notification-button" aria-label="Notifications">♧<em id="notification-count">0</em></button><button id="quick-add" class="primary-btn small">+ Add vehicle</button></div></header>
+      <div id="page-overview" class="page"></div>
+      <div id="page-vehicles" class="page hidden"></div>
+      <div id="page-services" class="page hidden"></div>
+      <div id="page-reminders" class="page hidden"></div>
+      <div id="page-feedback" class="page hidden"></div>
+      <div id="page-admin" class="page hidden"></div>
+    </section>
+    <button id="chat-fab" class="chat-fab" aria-label="Open help chat">✦<span>Need help?</span></button>
+    <section id="chat-box" class="chat-box hidden"><div class="chat-head"><span><b>VehicleCare Assist</b><small>● Online 24/7</small></span><button id="chat-close">×</button></div><div id="chat-log" class="chat-log"><p class="bot-msg">Hi! I can help with your vehicle, service status, due dates, bill, or report.</p></div><form id="chat-form"><input name="message" placeholder="Ask anything about your service..." autocomplete="off"><button>↑</button></form></section>
+  </main>
+  <div id="modal-root"></div>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="/static/app.js"></script>
+</body>
+</html>
