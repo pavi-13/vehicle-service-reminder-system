@@ -1,30 +1,2361 @@
-const state = { token: localStorage.getItem('vc_token'), user: null, vehicles: [], jobs: [], notifications: [], rating: 5, realtimeChannel: null };
-const $ = (s, p = document) => p.querySelector(s);
-const $$ = (s, p = document) => [...p.querySelectorAll(s)];
-const esc = (v = '') => String(v).replace(/[&<>'"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
-const icon = type => type?.toLowerCase().includes('bike') ? '🏍' : type?.toLowerCase().includes('scooter') ? '🛵' : '🚗';
-const friendly = d => d ? new Date(`${d}T00:00:00`).toLocaleDateString('en-IN',{day:'numeric',month:'short',year:'numeric'}) : 'Not set';
-const ago = iso => { const n = Math.max(0, Math.round((Date.now()-new Date(iso))/86400000)); return n ? `${n} day${n>1?'s':''} ago` : 'Today'; };
-function toast(message){const t=$('#toast');t.textContent=message;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),3200)}
-async function api(path, options={}) { const res=await fetch(path,{...options,headers:{'Content-Type':'application/json',...(state.token?{Authorization:`Bearer ${state.token}`}:{})}}); const data=await res.json().catch(()=>({detail:'Server response was invalid'})); if(!res.ok) throw new Error(data.detail||'Something went wrong'); return data; }
-function switchAuth(mode){$$('.tab').forEach(t=>t.classList.toggle('active',t.dataset.auth===mode));$('#login-form').classList.toggle('hidden',mode!=='login');$('#register-form').classList.toggle('hidden',mode!=='register');$('#otp-form').classList.add('hidden');$('#auth-title').textContent=mode==='login'?'Welcome back':'Your vehicle care starts here';$('#auth-subtitle').textContent=mode==='login'?'Sign in to manage your vehicles.':'Create an account in less than a minute.'}
-function authenticated(data){state.token=data.token;state.user=data.user;localStorage.setItem('vc_token',data.token);showApp()}
-async function connectRealtime(){try{const config=await api('/api/realtime-config');if(!config.enabled||!window.supabase)return;const client=window.supabase.createClient(config.url,config.anon_key);state.realtimeChannel=client.channel(`vehiclecare-notifications-${state.user.id}`).on('postgres_changes',{event:'INSERT',schema:'public',table:'realtime_notifications',filter:`recipient_id=eq.${state.user.id}`},async()=>{await loadData();go('reminders');toast('New service update received')}).subscribe(status=>{if(status==='CHANNEL_ERROR')console.warn('Realtime subscription failed. Check the Supabase SQL setup.');});}catch(error){console.warn('Realtime is unavailable',error)}}
-async function showApp(){try{state.user=await api('/api/me');$('#auth-view').classList.add('hidden');$('#app-view').classList.remove('hidden');$('#user-name').textContent=state.user.name;$('#avatar').textContent=state.user.name.slice(0,1).toUpperCase();$('#user-role').textContent=state.user.role;$('#workspace-label').textContent=state.user.role==='admin'?'SERVICE CENTRE':'MY GARAGE';$('.admin-nav').classList.toggle('hidden',state.user.role!=='admin');await loadData();await connectRealtime();go('overview')}catch(e){localStorage.removeItem('vc_token');state.token=null;toast('Please sign in again.')}}
-async function loadData(){[state.vehicles,state.jobs,state.notifications,state.dashboard]=await Promise.all([api('/api/vehicles'),api('/api/jobs'),api('/api/notifications'),api('/api/dashboard')]);$('#notification-count').textContent=state.notifications.length;}
-function go(page){$$('.page').forEach(e=>e.classList.add('hidden'));$(`#page-${page}`).classList.remove('hidden');$$('.nav-item').forEach(e=>e.classList.toggle('active',e.dataset.page===page));const title={overview:['GOOD TO SEE YOU','Your garage at a glance'],vehicles:['YOUR FLEET','Vehicles you care for'],services:['SERVICE TRACKING','Live service progress'],reminders:['STAY AHEAD','Your notifications & due dates'],feedback:['WE VALUE YOUR VOICE','Tell us how we did'],admin:['ADMIN CONTROL','Service centre desk']}[page];$('#page-kicker').textContent=title[0];$('#page-title').textContent=title[1];({overview:renderOverview,vehicles:renderVehicles,services:renderServices,reminders:renderReminders,feedback:renderFeedback,admin:renderAdmin}[page])()}
-function empty(text){return `<div class="empty">${esc(text)}</div>`}
-function tag(status){const c=status==='Completed'||status==='Ready for Pickup'?'completed':status==='Waiting for Parts'?'alert':'';return `<span class="tag ${c}">${esc(status)}</span>`}
-function statusJob(j){return `<div class="job-row"><div class="vehicle-icon">${icon(j.type)}</div><div class="row-main"><b>${esc(j.brand)} ${esc(j.model)}</b><small>${esc(j.registration_no)} · ${esc(j.complaint||'General service')}</small></div>${tag(j.status)}</div>`}
-function renderOverview(){const d=state.dashboard;$('#page-overview').innerHTML=`<div class="stats"><div class="stat-card"><div class="stat-icon">▣</div><b>${d.vehicles}</b><span>Registered vehicles</span></div><div class="stat-card"><div class="stat-icon">◌</div><b>${d.active_jobs}</b><span>Active services</span></div><div class="stat-card"><div class="stat-icon">✓</div><b>${d.completed_jobs}</b><span>Completed services</span></div><div class="stat-card"><div class="stat-icon">◷</div><b>${d.due_services}</b><span>Due / overdue services</span></div></div><div class="overview-grid"><section class="panel"><div class="panel-title"><h3>${state.user.role==='admin'?'Recent service jobs':'Service in progress'}</h3><button data-go="services">View all →</button></div>${state.jobs.length?state.jobs.slice(0,5).map(statusJob).join(''):empty('No service jobs yet.')}</section><section class="panel"><div class="panel-title"><h3>Upcoming care</h3><button data-go="vehicles">My vehicles →</button></div>${state.vehicles.length?state.vehicles.slice(0,4).map(v=>`<div class="vehicle-row"><div class="vehicle-icon">${icon(v.type)}</div><div class="row-main"><b>${esc(v.brand)} ${esc(v.model)}</b><small>Next service: ${friendly(v.next_service_date)}</small></div>${v.next_service_date&&v.next_service_date<=new Date().toISOString().slice(0,10)?'<span class="tag alert">Due</span>':''}</div>`).join(''):empty('Add your first vehicle to begin.')}</section></div>`;$$('[data-go]',$('#page-overview')).forEach(b=>b.onclick=()=>go(b.dataset.go))}
-function renderVehicles(){const canAdd=state.user.role!=='admin';$('#page-vehicles').innerHTML=`<div class="page-head"><div><h2>${state.user.role==='admin'?'All customer vehicles':'My vehicles'}</h2><p>Keep each vehicle’s service timeline organised.</p></div>${canAdd?'<button class="primary-btn small" id="add-vehicle">+ Add vehicle</button>':''}</div><div class="vehicle-grid">${state.vehicles.length?state.vehicles.map(v=>`<article class="vehicle-card"><div class="vehicle-top"><div class="vehicle-icon">${icon(v.type)}</div>${state.user.role==='customer'?`<button class="link-btn delete-vehicle" data-id="${v.id}">Remove</button>`:`<span class="tag">${esc(v.owner_name||'Customer')}</span>`}</div><h3>${esc(v.brand)} ${esc(v.model)}</h3><p>${esc(v.type)}${v.year?' · '+esc(v.year):''}</p><span class="plate">${esc(v.registration_no)}</span><div class="due"><span>Next service</span><b>${friendly(v.next_service_date)}</b></div></article>`).join(''):empty('No vehicles added yet.')}</div>`;$('#add-vehicle')?.addEventListener('click',vehicleModal);$$('.delete-vehicle').forEach(b=>b.onclick=async()=>{if(confirm('Remove this vehicle?')){try{await api(`/api/vehicles/${b.dataset.id}`,{method:'DELETE'});await loadData();renderVehicles();toast('Vehicle removed')}catch(e){toast(e.message)}}})}
-function renderServices(){const mine=state.user.role==='admin'?'All current and previous service jobs.':'Track every update from check-in to completion.';$('#page-services').innerHTML=`<div class="page-head"><div><h2>${state.user.role==='admin'?'Service jobs':'My service'}</h2><p>${mine}</p></div></div>${state.jobs.length?state.jobs.map(j=>`<article class="panel service-card"><div class="panel-title"><div><h3>${icon(j.type)} ${esc(j.brand)} ${esc(j.model)} <small>(${esc(j.registration_no)})</small></h3><p>${state.user.role==='admin'?`Customer: ${esc(j.owner_name)} · `:''}Checked in: ${friendly(j.check_in_date)}</p></div>${tag(j.status)}</div><div class="service-meta"><span><b>Complaint</b>${esc(j.complaint||'General service')}</span><span><b>Expected delivery</b>${friendly(j.expected_delivery_date)}</span><span><b>Bill amount</b>₹${Number(j.bill_amount||0).toFixed(2)}</span><span><b>Next service</b>${friendly(j.next_service_date)}</span></div>${j.work_done?`<div class="report"><b>Service report</b><br>${esc(j.work_done)}${j.technician_notes?`<br><small>Technician note: ${esc(j.technician_notes)}</small>`:''}</div>`:''}${state.user.role==='admin'?`<p style="margin:15px 0 0"><button class="primary-btn small edit-job" data-id="${j.id}">Update status →</button></p>`:''}</article>`).join(''):empty('There are no service jobs to show.')}`;$$('.edit-job').forEach(b=>b.onclick=()=>jobModal(state.jobs.find(j=>j.id===+b.dataset.id)))}
-function renderReminders(){const due=state.vehicles.filter(v=>v.next_service_date).sort((a,b)=>a.next_service_date.localeCompare(b.next_service_date));$('#page-reminders').innerHTML=`<div class="overview-grid"><section class="panel"><div class="panel-title"><h3>Service schedule</h3></div>${due.length?due.map(v=>`<div class="note-row"><i>${icon(v.type)}</i><div><b>${esc(v.brand)} ${esc(v.model)} · ${esc(v.registration_no)}</b><p>Next service due: <strong>${friendly(v.next_service_date)}</strong></p></div>${v.next_service_date<=new Date().toISOString().slice(0,10)?'<span class="tag alert">Due</span>':''}</div>`).join(''):empty('Add a next service date to receive reminders.')}</section><section class="panel"><div class="panel-title"><h3>Notification history</h3></div>${state.notifications.length?state.notifications.map(n=>`<div class="note-row"><i>✦</i><div><b>${esc(n.subject)}</b><p>${esc(n.message)}</p><small>${ago(n.created_at)}</small></div></div>`).join(''):empty('Your service notifications will appear here.')}</section></div>`}
-function renderFeedback(){const stars=[1,2,3,4,5].map(n=>`<button type="button" data-star="${n}" class="${n<=state.rating?'selected':''}">★</button>`).join('');$('#page-feedback').innerHTML=`<section class="panel feedback-form"><div class="panel-title"><h3>How was your experience?</h3></div><p style="font-size:13px;color:var(--muted)">Your feedback helps our service centre improve every visit.</p><form id="feedback-form"><label>Your rating <span class="star-input">${stars}</span></label><label>Share your thoughts<textarea name="comment" placeholder="What did you like, or what could we improve?"></textarea></label><button class="primary-btn" type="submit">Send feedback <span>→</span></button></form></section>`;$$('[data-star]').forEach(b=>b.onclick=()=>{state.rating=+b.dataset.star;renderFeedback()});$('#feedback-form').onsubmit=async e=>{e.preventDefault();try{await api('/api/feedback',{method:'POST',body:JSON.stringify({rating:state.rating,comment:new FormData(e.target).get('comment')})});e.target.reset();toast('Thank you for your feedback!')}catch(x){toast(x.message)}}}
-async function renderAdmin(){if(state.user.role!=='admin')return;const feedback=await api('/api/feedback');$('#page-admin').innerHTML=`<div class="page-head"><div><h2>Service desk</h2><p>Create jobs, send service updates, and view customer feedback.</p></div><button class="primary-btn small" id="create-job">+ New service job</button></div><div class="admin-grid"><section class="panel"><div class="panel-title"><h3>Live jobs</h3><button data-go="services">Open all →</button></div><div class="table-wrap"><table class="data-table"><thead><tr><th>VEHICLE</th><th>CUSTOMER</th><th>STATUS</th><th></th></tr></thead><tbody>${state.jobs.slice(0,8).map(j=>`<tr><td><b>${esc(j.registration_no)}</b><br>${esc(j.brand)} ${esc(j.model)}</td><td>${esc(j.owner_name)}</td><td>${tag(j.status)}</td><td><button class="action-btn edit-job" data-id="${j.id}">UPDATE</button></td></tr>`).join('')||'<tr><td colspan="4">No jobs yet</td></tr>'}</tbody></table></div></section><section class="panel"><div class="panel-title"><h3>Customer feedback</h3></div>${feedback.length?feedback.slice(0,5).map(f=>`<div class="note-row"><i>★</i><div><b>${esc(f.customer_name)} · ${'★'.repeat(f.rating)}${'☆'.repeat(5-f.rating)}</b><p>${esc(f.comment||'No written comment.')}</p></div></div>`).join(''):empty('No feedback received yet.')}</section></div>`;$('#create-job').onclick=jobModal;$$('.edit-job').forEach(b=>b.onclick=()=>jobModal(state.jobs.find(j=>j.id===+b.dataset.id)));$$('[data-go]',$('#page-admin')).forEach(b=>b.onclick=()=>go(b.dataset.go))}
-function modal(title, html, onSubmit){$('#modal-root').innerHTML=`<div class="modal-backdrop"><section class="modal"><div class="modal-head"><h2>${title}</h2><button class="close-modal">×</button></div><form id="modal-form">${html}</form></section></div>`;$('.close-modal').onclick=closeModal;$('#modal-root').firstElementChild.onclick=e=>{if(e.target===e.currentTarget)closeModal()};$('#modal-form').onsubmit=onSubmit}
-function closeModal(){$('#modal-root').innerHTML=''}
-function vehicleModal(){modal('Add a vehicle',`<div class="split"><label>Vehicle type<select name="type"><option>Car</option><option>Bike</option><option>Scooter</option><option>Other</option></select></label><label>Year<input name="year" type="number" min="1900" max="2100" placeholder="2024"></label></div><div class="split"><label>Brand<input name="brand" placeholder="Honda" required></label><label>Model<input name="model" placeholder="City" required></label></div><label>Registration number<input name="registration_no" placeholder="TN 01 AB 1234" required></label><div class="split"><label>Last service date<input name="last_service_date" type="date"></label><label>Next service date<input name="next_service_date" type="date"></label></div><label>Notes<textarea name="notes" placeholder="Optional vehicle notes"></textarea></label><button class="primary-btn" type="submit">Save vehicle <span>→</span></button>`,async e=>{e.preventDefault();const v=Object.fromEntries(new FormData(e.target));v.year=v.year?+v.year:null;try{await api('/api/vehicles',{method:'POST',body:JSON.stringify(v)});await loadData();closeModal();renderVehicles();toast('Vehicle added successfully')}catch(x){toast(x.message)}})}
-function jobModal(existing=null){const vehicleOptions=state.vehicles.map(v=>`<option value="${v.id}" ${existing?.vehicle_id===v.id?'selected':''}>${esc(v.registration_no)} — ${esc(v.brand)} ${esc(v.model)}${v.owner_name?' ('+esc(v.owner_name)+')':''}</option>`).join('');if(existing){modal('Update service job',`<label>Service status<select name="status">${['Received','Inspection','In Service','Waiting for Parts','Quality Check','Ready for Pickup','Completed'].map(s=>`<option ${existing.status===s?'selected':''}>${s}</option>`).join('')}</select></label><label>Work completed / service report<textarea name="work_done" placeholder="Oil change, brake inspection...">${esc(existing.work_done||'')}</textarea></label><label>Technician note<textarea name="technician_notes">${esc(existing.technician_notes||'')}</textarea></label><div class="split"><label>Bill amount ₹<input name="bill_amount" type="number" min="0" step="0.01" value="${existing.bill_amount||0}"></label><label>Next service date<input name="next_service_date" type="date" value="${existing.next_service_date||''}"></label></div><button class="primary-btn" type="submit">Save & notify customer <span>→</span></button>`,async e=>{e.preventDefault();const v=Object.fromEntries(new FormData(e.target));v.bill_amount=+v.bill_amount;try{await api(`/api/jobs/${existing.id}`,{method:'PATCH',body:JSON.stringify(v)});await loadData();closeModal();go('services');toast('Customer has been notified')}catch(x){toast(x.message)}});return} if(!state.vehicles.length){toast('A customer needs to add a vehicle first');return}modal('Create service job',`<label>Customer vehicle<select name="vehicle_id">${vehicleOptions}</select></label><div class="split"><label>Check-in date<input name="check_in_date" type="date" value="${new Date().toISOString().slice(0,10)}"></label><label>Expected delivery<input name="expected_delivery_date" type="date"></label></div><label>Current status<select name="status"><option>Received</option><option>Inspection</option><option>In Service</option></select></label><label>Customer complaint<textarea name="complaint" placeholder="Describe reported issue"></textarea></label><label>Odometer (km)<input name="odometer" type="number" min="0" placeholder="Optional"></label><button class="primary-btn" type="submit">Create & notify <span>→</span></button>`,async e=>{e.preventDefault();const v=Object.fromEntries(new FormData(e.target));v.vehicle_id=+v.vehicle_id;v.odometer=v.odometer?+v.odometer:null;try{await api('/api/jobs',{method:'POST',body:JSON.stringify(v)});await loadData();closeModal();go('admin');toast('Service job created and customer notified')}catch(x){toast(x.message)}})}
-function init(){ $$('.tab').forEach(b=>b.onclick=()=>switchAuth(b.dataset.auth));$('#login-form').onsubmit=async e=>{e.preventDefault();try{authenticated(await api('/api/auth/login',{method:'POST',body:JSON.stringify(Object.fromEntries(new FormData(e.target))) }))}catch(x){toast(x.message)}};$('#register-form').onsubmit=async e=>{e.preventDefault();const v=Object.fromEntries(new FormData(e.target));if(!v.email&&!v.phone)return toast('Enter an email or mobile number');try{authenticated(await api('/api/auth/register',{method:'POST',body:JSON.stringify(v)}))}catch(x){toast(x.message)}};$('#otp-toggle').onclick=()=>{$('#login-form').classList.add('hidden');$('#otp-form').classList.remove('hidden')};$('#password-toggle').onclick=()=>{$('#otp-form').classList.add('hidden');$('#login-form').classList.remove('hidden')};$('#otp-form').onsubmit=async e=>{e.preventDefault();const v=Object.fromEntries(new FormData(e.target));try{if(!$('#otp-code-wrap').classList.contains('hidden')){authenticated(await api('/api/auth/verify-otp',{method:'POST',body:JSON.stringify(v)}));return}const r=await api('/api/auth/request-otp',{method:'POST',body:JSON.stringify(v)});$('#otp-code-wrap').classList.remove('hidden');$('#otp-submit').innerHTML='Verify & sign in <span>→</span>';$('#otp-help').textContent=r.dev_otp?`Demo OTP: ${r.dev_otp}`:r.message}catch(x){toast(x.message)}};$('#logout').onclick=()=>{localStorage.removeItem('vc_token');state.token=null;location.reload()};$$('.nav-item').forEach(b=>b.onclick=()=>go(b.dataset.page));$('#quick-add').onclick=vehicleModal;$('#notification-button').onclick=()=>go('reminders');$('#chat-fab').onclick=()=>$('#chat-box').classList.toggle('hidden');$('#chat-close').onclick=()=>$('#chat-box').classList.add('hidden');$('#chat-form').onsubmit=async e=>{e.preventDefault();const input=$('[name=message]',e.target),message=input.value.trim();if(!message)return;$('#chat-log').insertAdjacentHTML('beforeend',`<p class="user-msg">${esc(message)}</p>`);input.value='';try{const r=await api('/api/chat',{method:'POST',body:JSON.stringify({message})});$('#chat-log').insertAdjacentHTML('beforeend',`<p class="bot-msg">${esc(r.reply)}</p>`)}catch(x){toast(x.message)}$('#chat-log').scrollTop=99999};if(state.token)showApp() }
-init();
+// ============================================================
+// VehicleCare Frontend
+// ============================================================
+
+const API = "/api";
+
+let token = localStorage.getItem("vehiclecare_token");
+let currentUser = null;
+let currentPage = "dashboard";
+
+let pollingTimer = null;
+
+
+// ============================================================
+// INIT
+// ============================================================
+
+document.addEventListener("DOMContentLoaded", async () => {
+
+    document.getElementById("intakeCheckIn").value =
+        new Date().toISOString().slice(0, 10);
+
+    if (token) {
+
+        try {
+
+            currentUser = await api("/me");
+
+            showMainApp();
+
+            await loadDashboard();
+
+            startPolling();
+
+        } catch (error) {
+
+            logout(false);
+
+        }
+
+    }
+
+});
+
+
+// ============================================================
+// API
+// ============================================================
+
+async function api(path, options = {}) {
+
+    const headers = {
+        "Content-Type": "application/json",
+        ...(options.headers || {})
+    };
+
+    if (token) {
+        headers["Authorization"] = `Bearer ${token}`;
+    }
+
+    const response = await fetch(
+        API + path,
+        {
+            ...options,
+            headers
+        }
+    );
+
+    let data = null;
+
+    try {
+        data = await response.json();
+    } catch {
+        data = {};
+    }
+
+    if (!response.ok) {
+
+        throw new Error(
+            data.detail ||
+            data.message ||
+            "Something went wrong"
+        );
+
+    }
+
+    return data;
+}
+
+
+// ============================================================
+// AUTH UI
+// ============================================================
+
+function showAuth(type) {
+
+    const loginForm =
+        document.getElementById("loginForm");
+
+    const registerForm =
+        document.getElementById("registerForm");
+
+    const loginTab =
+        document.getElementById("loginTab");
+
+    const registerTab =
+        document.getElementById("registerTab");
+
+    if (type === "login") {
+
+        loginForm.classList.remove("hidden");
+        registerForm.classList.add("hidden");
+
+        loginTab.classList.add("active");
+        registerTab.classList.remove("active");
+
+    } else {
+
+        loginForm.classList.add("hidden");
+        registerForm.classList.remove("hidden");
+
+        loginTab.classList.remove("active");
+        registerTab.classList.add("active");
+
+    }
+
+}
+
+
+// ============================================================
+// REGISTER
+// ============================================================
+
+async function register(event) {
+
+    event.preventDefault();
+
+    const message =
+        document.getElementById("registerMessage");
+
+    message.textContent = "Creating account...";
+
+    try {
+
+        const data = await api(
+            "/auth/register",
+            {
+                method: "POST",
+                body: JSON.stringify({
+
+                    name:
+                        document.getElementById(
+                            "registerName"
+                        ).value,
+
+                    email:
+                        document.getElementById(
+                            "registerEmail"
+                        ).value || null,
+
+                    phone:
+                        document.getElementById(
+                            "registerPhone"
+                        ).value || null,
+
+                    password:
+                        document.getElementById(
+                            "registerPassword"
+                        ).value
+
+                })
+            }
+        );
+
+        token = data.token;
+
+        currentUser = data.user;
+
+        localStorage.setItem(
+            "vehiclecare_token",
+            token
+        );
+
+        showToast(
+            "Account created successfully"
+        );
+
+        showMainApp();
+
+        await loadDashboard();
+
+        startPolling();
+
+    } catch (error) {
+
+        message.textContent =
+            error.message;
+
+    }
+
+}
+
+
+// ============================================================
+// LOGIN
+// ============================================================
+
+async function login(event) {
+
+    event.preventDefault();
+
+    const message =
+        document.getElementById("loginMessage");
+
+    message.textContent = "Logging in...";
+
+    try {
+
+        const data = await api(
+            "/auth/login",
+            {
+                method: "POST",
+                body: JSON.stringify({
+
+                    identifier:
+                        document.getElementById(
+                            "loginIdentifier"
+                        ).value,
+
+                    password:
+                        document.getElementById(
+                            "loginPassword"
+                        ).value
+
+                })
+            }
+        );
+
+        token = data.token;
+
+        currentUser = data.user;
+
+        localStorage.setItem(
+            "vehiclecare_token",
+            token
+        );
+
+        message.textContent = "";
+
+        showMainApp();
+
+        await loadDashboard();
+
+        startPolling();
+
+    } catch (error) {
+
+        message.textContent =
+            error.message;
+
+    }
+
+}
+
+
+// ============================================================
+// LOGOUT
+// ============================================================
+
+function logout(showMessage = true) {
+
+    token = null;
+    currentUser = null;
+
+    localStorage.removeItem(
+        "vehiclecare_token"
+    );
+
+    if (pollingTimer) {
+        clearInterval(pollingTimer);
+    }
+
+    document
+        .getElementById("mainScreen")
+        .classList.add("hidden");
+
+    document
+        .getElementById("authScreen")
+        .classList.remove("hidden");
+
+    if (showMessage) {
+        showToast("Logged out");
+    }
+
+}
+
+
+// ============================================================
+// SHOW MAIN APP
+// ============================================================
+
+function showMainApp() {
+
+    document
+        .getElementById("authScreen")
+        .classList.add("hidden");
+
+    document
+        .getElementById("mainScreen")
+        .classList.remove("hidden");
+
+
+    const name =
+        currentUser?.name || "User";
+
+    document.getElementById(
+        "sidebarUserName"
+    ).textContent = name;
+
+    document.getElementById(
+        "topUserName"
+    ).textContent = name;
+
+    document.getElementById(
+        "userAvatar"
+    ).textContent =
+        name.charAt(0).toUpperCase();
+
+    document.getElementById(
+        "topAvatar"
+    ).textContent =
+        name.charAt(0).toUpperCase();
+
+
+    const role =
+        currentUser?.role === "admin"
+            ? "Administrator"
+            : "Customer";
+
+    document.getElementById(
+        "sidebarUserRole"
+    ).textContent = role;
+
+
+    if (currentUser?.role === "admin") {
+
+        document
+            .getElementById("adminServiceNav")
+            .classList.remove("hidden");
+
+        document
+            .getElementById("adminFeedbackNav")
+            .classList.remove("hidden");
+
+    }
+
+}
+
+
+// ============================================================
+// NAVIGATION
+// ============================================================
+
+async function navigate(page) {
+
+    currentPage = page;
+
+    document
+        .querySelectorAll(".page")
+        .forEach(el => {
+            el.classList.add("hidden");
+        });
+
+    const target =
+        document.getElementById(
+            `page-${page}`
+        );
+
+    if (target) {
+        target.classList.remove("hidden");
+    }
+
+
+    document
+        .querySelectorAll(".nav-item")
+        .forEach(button => {
+
+            button.classList.toggle(
+                "active",
+                button.dataset.page === page
+            );
+
+        });
+
+
+    const titles = {
+
+        dashboard: [
+            "Dashboard",
+            "Overview of your vehicle service"
+        ],
+
+        vehicles: [
+            "My Vehicles",
+            "Manage your registered vehicles"
+        ],
+
+        services: [
+            "My Service",
+            "Track your service progress"
+        ],
+
+        notifications: [
+            "Notifications",
+            "Service updates and reminders"
+        ],
+
+        admin: [
+            "Service Desk",
+            "Vehicle intake and service management"
+        ],
+
+        feedback: [
+            "Customer Feedback",
+            "Service ratings and comments"
+        ]
+
+    };
+
+    const info =
+        titles[page] || titles.dashboard;
+
+    document.getElementById(
+        "pageTitle"
+    ).textContent = info[0];
+
+    document.getElementById(
+        "pageSubtitle"
+    ).textContent = info[1];
+
+
+    try {
+
+        if (page === "dashboard") {
+            await loadDashboard();
+        }
+
+        if (page === "vehicles") {
+            await loadVehicles();
+        }
+
+        if (page === "services") {
+            await loadServices();
+        }
+
+        if (page === "notifications") {
+            await loadNotifications();
+        }
+
+        if (page === "admin") {
+            await loadAdminJobs();
+        }
+
+        if (page === "feedback") {
+            await loadFeedback();
+        }
+
+    } catch (error) {
+
+        showToast(
+            error.message,
+            "error"
+        );
+
+    }
+
+}
+
+
+// ============================================================
+// DASHBOARD
+// ============================================================
+
+async function loadDashboard() {
+
+    const data =
+        await api("/dashboard");
+
+    renderDashboardStats(data);
+
+    const jobs =
+        await api("/jobs");
+
+    renderDashboardJobs(
+        Array.isArray(jobs)
+            ? jobs.slice(0, 6)
+            : []
+    );
+
+}
+
+
+// ============================================================
+// DASHBOARD STATS
+// ============================================================
+
+function renderDashboardStats(data) {
+
+    const container =
+        document.getElementById(
+            "dashboardStats"
+        );
+
+    container.innerHTML = `
+
+        <div class="stat-card">
+            <div class="stat-icon">🚗</div>
+            <div>
+                <span>Vehicles</span>
+                <strong>${data.vehicles || 0}</strong>
+            </div>
+        </div>
+
+        <div class="stat-card">
+            <div class="stat-icon">🔧</div>
+            <div>
+                <span>Active Services</span>
+                <strong>${data.active_jobs || 0}</strong>
+            </div>
+        </div>
+
+        <div class="stat-card">
+            <div class="stat-icon">✓</div>
+            <div>
+                <span>Completed</span>
+                <strong>${data.completed_jobs || 0}</strong>
+            </div>
+        </div>
+
+        <div class="stat-card">
+            <div class="stat-icon">⏰</div>
+            <div>
+                <span>Due Services</span>
+                <strong>${data.due_services || 0}</strong>
+            </div>
+        </div>
+
+    `;
+
+}
+
+
+// ============================================================
+// DASHBOARD JOBS
+// ============================================================
+
+function renderDashboardJobs(jobs) {
+
+    const container =
+        document.getElementById(
+            "dashboardJobs"
+        );
+
+    if (!jobs.length) {
+
+        container.innerHTML =
+            emptyState(
+                "No service history yet",
+                "Your service activity will appear here."
+            );
+
+        return;
+    }
+
+    container.innerHTML =
+        jobs.map(jobCard).join("");
+
+}
+
+
+// ============================================================
+// VEHICLES
+// ============================================================
+
+async function loadVehicles() {
+
+    const vehicles =
+        await api("/vehicles");
+
+    const container =
+        document.getElementById(
+            "vehiclesGrid"
+        );
+
+    if (!vehicles.length) {
+
+        container.innerHTML =
+            emptyState(
+                "No vehicles added",
+                "Add your vehicle to start tracking services."
+            );
+
+        return;
+    }
+
+    container.innerHTML =
+        vehicles
+            .map(vehicleCard)
+            .join("");
+
+}
+
+
+// ============================================================
+// VEHICLE CARD
+// ============================================================
+
+function vehicleCard(vehicle) {
+
+    const current =
+        vehicle.current_job;
+
+    const status =
+        current?.status ||
+        "No active service";
+
+    return `
+
+        <div
+            class="vehicle-card"
+            onclick="openVehicleHistory(${vehicle.id})"
+        >
+
+            <div class="vehicle-card-top">
+
+                <div class="vehicle-icon">
+                    🚗
+                </div>
+
+                <span class="status-pill ${
+                    current
+                        ? statusClass(status)
+                        : "neutral"
+                }">
+                    ${escapeHtml(status)}
+                </span>
+
+            </div>
+
+            <h3>
+                ${escapeHtml(vehicle.brand)}
+                ${escapeHtml(vehicle.model)}
+            </h3>
+
+            <div class="registration">
+                ${escapeHtml(vehicle.registration_no)}
+            </div>
+
+            <div class="vehicle-meta">
+
+                <span>
+                    ${escapeHtml(vehicle.type || "Car")}
+                </span>
+
+                <span>
+                    ${vehicle.year || "-"}
+                </span>
+
+            </div>
+
+            <div class="vehicle-footer">
+
+                <span>
+                    ${vehicle.service_count || 0}
+                    service(s)
+                </span>
+
+                <span>
+                    View History →
+                </span>
+
+            </div>
+
+        </div>
+
+    `;
+
+}
+
+
+// ============================================================
+// ADD VEHICLE MODAL
+// ============================================================
+
+function openVehicleModal() {
+
+    document
+        .getElementById("vehicleModal")
+        .classList.remove("hidden");
+
+}
+
+
+async function addVehicle(event) {
+
+    event.preventDefault();
+
+    try {
+
+        await api(
+            "/vehicles",
+            {
+                method: "POST",
+                body: JSON.stringify({
+
+                    type:
+                        document.getElementById(
+                            "vehicleType"
+                        ).value,
+
+                    brand:
+                        document.getElementById(
+                            "vehicleBrand"
+                        ).value,
+
+                    model:
+                        document.getElementById(
+                            "vehicleModel"
+                        ).value,
+
+                    registration_no:
+                        document.getElementById(
+                            "vehicleRegistration"
+                        ).value,
+
+                    year:
+                        numberOrNull(
+                            document.getElementById(
+                                "vehicleYear"
+                            ).value
+                        ),
+
+                    last_service_date:
+                        valueOrNull(
+                            document.getElementById(
+                                "vehicleLastService"
+                            ).value
+                        ),
+
+                    next_service_date:
+                        valueOrNull(
+                            document.getElementById(
+                                "vehicleNextService"
+                            ).value
+                        ),
+
+                    notes:
+                        valueOrNull(
+                            document.getElementById(
+                                "vehicleNotes"
+                            ).value
+                        )
+
+                })
+            }
+        );
+
+        closeModal("vehicleModal");
+
+        showToast(
+            "Vehicle added successfully"
+        );
+
+        event.target.reset();
+
+        await loadVehicles();
+
+        await loadDashboard();
+
+    } catch (error) {
+
+        showToast(
+            error.message,
+            "error"
+        );
+
+    }
+
+}
+
+
+// ============================================================
+// SERVICES
+// ============================================================
+
+async function loadServices() {
+
+    const jobs =
+        await api("/jobs");
+
+    const container =
+        document.getElementById(
+            "servicesGrid"
+        );
+
+    if (!jobs.length) {
+
+        container.innerHTML =
+            emptyState(
+                "No services yet",
+                "Your service details will appear after vehicle intake."
+            );
+
+        return;
+    }
+
+    container.innerHTML =
+        jobs
+            .map(jobCard)
+            .join("");
+
+}
+
+
+// ============================================================
+// JOB CARD
+// ============================================================
+
+function jobCard(job) {
+
+    const status =
+        job.status || "Received";
+
+    const timeline =
+        job.timeline || [];
+
+    const completed =
+        timeline.filter(
+            item =>
+                item.status === "Completed"
+        ).length;
+
+    const percentage =
+        timeline.length
+            ? Math.round(
+                (completed / timeline.length) * 100
+            )
+            : 0;
+
+    return `
+
+        <div class="job-card">
+
+            <div class="job-card-header">
+
+                <div>
+
+                    <span class="job-service-type">
+                        ${escapeHtml(
+                            job.service_type ||
+                            "Service"
+                        )}
+                    </span>
+
+                    <h3>
+                        ${escapeHtml(
+                            job.brand || ""
+                        )}
+                        ${escapeHtml(
+                            job.model || ""
+                        )}
+                    </h3>
+
+                    <div class="registration">
+                        ${escapeHtml(
+                            job.registration_no ||
+                            ""
+                        )}
+                    </div>
+
+                </div>
+
+                <span class="status-pill ${statusClass(status)}">
+                    ${escapeHtml(status)}
+                </span>
+
+            </div>
+
+
+            <div class="job-info-grid">
+
+                <div>
+                    <span>Token</span>
+                    <strong>
+                        ${escapeHtml(
+                            job.token_number || "-"
+                        )}
+                    </strong>
+                </div>
+
+                <div>
+                    <span>Check-in</span>
+                    <strong>
+                        ${formatDate(
+                            job.check_in_date
+                        )}
+                    </strong>
+                </div>
+
+                <div>
+                    <span>Delivery</span>
+                    <strong>
+                        ${formatDate(
+                            job.expected_delivery_date
+                        )}
+                    </strong>
+                </div>
+
+                <div>
+                    <span>Bill</span>
+                    <strong>
+                        ₹${money(
+                            job.bill_amount
+                        )}
+                    </strong>
+                </div>
+
+            </div>
+
+
+            <div class="progress-section">
+
+                <div class="progress-header">
+
+                    <span>Service Progress</span>
+
+                    <strong>
+                        ${percentage}%
+                    </strong>
+
+                </div>
+
+                <div class="progress-bar">
+
+                    <div
+                        class="progress-fill"
+                        style="width:${percentage}%"
+                    ></div>
+
+                </div>
+
+            </div>
+
+
+            ${renderTimeline(timeline)}
+
+
+            ${
+                job.status === "Completed"
+                    ? `
+                        <div class="completed-box">
+
+                            <strong>
+                                ✓ Service Completed
+                            </strong>
+
+                            <span>
+                                Payment:
+                                ${escapeHtml(
+                                    job.payment_status ||
+                                    "Pending"
+                                )}
+                            </span>
+
+                        </div>
+                    `
+                    : ""
+            }
+
+        </div>
+
+    `;
+
+}
+
+
+// ============================================================
+// TIMELINE
+// ============================================================
+
+function renderTimeline(timeline) {
+
+    if (!timeline.length) {
+        return "";
+    }
+
+    return `
+
+        <div class="timeline">
+
+            ${timeline.map(item => `
+
+                <div class="timeline-item ${String(item.status || "").toLowerCase()}">
+
+                    <div class="timeline-dot">
+                        ${
+                            item.status === "Completed"
+                                ? "✓"
+                                : ""
+                        }
+                    </div>
+
+                    <div class="timeline-content">
+
+                        <strong>
+                            ${escapeHtml(item.stage)}
+                        </strong>
+
+                        <span>
+                            ${escapeHtml(item.status)}
+                        </span>
+
+                    </div>
+
+                </div>
+
+            `).join("")}
+
+        </div>
+
+    `;
+
+}
+
+
+// ============================================================
+// ADMIN VEHICLE SEARCH
+// ============================================================
+
+async function searchAdminVehicle() {
+
+    const q =
+        document.getElementById(
+            "adminVehicleSearch"
+        ).value.trim();
+
+    const container =
+        document.getElementById(
+            "adminSearchResults"
+        );
+
+    if (!q) {
+
+        container.innerHTML =
+            `<div class="info-message">
+                Enter a registration number.
+            </div>`;
+
+        return;
+
+    }
+
+    container.innerHTML =
+        `<div class="loading">Searching...</div>`;
+
+    try {
+
+        const vehicles =
+            await api(
+                `/admin/vehicle-search?q=${encodeURIComponent(q)}`
+            );
+
+        if (!vehicles.length) {
+
+            container.innerHTML =
+                emptyState(
+                    "Vehicle not found",
+                    "Make sure the vehicle is already registered under My Vehicles."
+                );
+
+            return;
+        }
+
+        container.innerHTML =
+            vehicles
+                .map(adminVehicleResult)
+                .join("");
+
+    } catch (error) {
+
+        container.innerHTML =
+            `<div class="error-box">
+                ${escapeHtml(error.message)}
+            </div>`;
+
+    }
+
+}
+
+
+// ============================================================
+// ADMIN VEHICLE RESULT
+// ============================================================
+
+function adminVehicleResult(vehicle) {
+
+    const active =
+        vehicle.active_job;
+
+    return `
+
+        <div class="search-result-card">
+
+            <div class="search-result-main">
+
+                <div class="vehicle-icon">
+                    🚗
+                </div>
+
+                <div>
+
+                    <h3>
+                        ${escapeHtml(
+                            vehicle.brand
+                        )}
+                        ${escapeHtml(
+                            vehicle.model
+                        )}
+                    </h3>
+
+                    <strong class="registration">
+                        ${escapeHtml(
+                            vehicle.registration_no
+                        )}
+                    </strong>
+
+                    <p>
+                        Customer:
+                        ${escapeHtml(
+                            vehicle.owner_name ||
+                            "Customer"
+                        )}
+                    </p>
+
+                </div>
+
+            </div>
+
+
+            <div class="search-result-actions">
+
+                ${
+                    active
+                        ? `
+                            <span class="status-pill ${statusClass(active.status)}">
+                                ${escapeHtml(active.status)}
+                            </span>
+
+                            <button
+                                class="secondary-btn"
+                                onclick="openJobUpdate(${active.id})"
+                            >
+                                Update Service
+                            </button>
+                        `
+                        : `
+                            <button
+                                class="primary-btn"
+                                onclick="openServiceIntake(
+                                    ${vehicle.id},
+                                    '${escapeJs(vehicle.brand)} ${escapeJs(vehicle.model)}',
+                                    '${escapeJs(vehicle.registration_no)}'
+                                )"
+                            >
+                                Start Service Intake
+                            </button>
+                        `
+                }
+
+            </div>
+
+        </div>
+
+    `;
+
+}
+
+
+// ============================================================
+// SERVICE INTAKE
+// ============================================================
+
+function openServiceIntake(
+    vehicleId,
+    vehicleName,
+    registration
+) {
+
+    document.getElementById(
+        "intakeVehicleId"
+    ).value = vehicleId;
+
+    document.getElementById(
+        "intakeVehicleTitle"
+    ).textContent =
+        `${vehicleName} • ${registration}`;
+
+    document.getElementById(
+        "intakeCheckIn"
+    ).value =
+        new Date().toISOString().slice(0, 10);
+
+    document
+        .getElementById("serviceModal")
+        .classList.remove("hidden");
+
+}
+
+
+async function createService(event) {
+
+    event.preventDefault();
+
+    try {
+
+        const data =
+            await api(
+                "/jobs",
+                {
+                    method: "POST",
+                    body: JSON.stringify({
+
+                        vehicle_id:
+                            Number(
+                                document.getElementById(
+                                    "intakeVehicleId"
+                                ).value
+                            ),
+
+                        check_in_date:
+                            document.getElementById(
+                                "intakeCheckIn"
+                            ).value,
+
+                        expected_delivery_date:
+                            valueOrNull(
+                                document.getElementById(
+                                    "intakeDelivery"
+                                ).value
+                            ),
+
+                        service_type:
+                            document.getElementById(
+                                "intakeServiceType"
+                            ).value,
+
+                        complaint:
+                            valueOrNull(
+                                document.getElementById(
+                                    "intakeComplaint"
+                                ).value
+                            ),
+
+                        damage_details:
+                            valueOrNull(
+                                document.getElementById(
+                                    "intakeDamage"
+                                ).value
+                            ),
+
+                        insurance_details:
+                            valueOrNull(
+                                document.getElementById(
+                                    "intakeInsurance"
+                                ).value
+                            ),
+
+                        estimate_amount:
+                            Number(
+                                document.getElementById(
+                                    "intakeEstimate"
+                                ).value
+                            ) || 0,
+
+                        odometer:
+                            numberOrNull(
+                                document.getElementById(
+                                    "intakeOdometer"
+                                ).value
+                            ),
+
+                        assigned_executive:
+                            valueOrNull(
+                                document.getElementById(
+                                    "intakeExecutive"
+                                ).value
+                            )
+
+                    })
+                }
+            );
+
+        closeModal("serviceModal");
+
+        event.target.reset();
+
+        showToast(
+            `Service started. Token: ${
+                data.token_number ||
+                data.job?.token_number ||
+                "Generated"
+            }`
+        );
+
+        await loadAdminJobs();
+
+    } catch (error) {
+
+        showToast(
+            error.message,
+            "error"
+        );
+
+    }
+
+}
+
+
+// ============================================================
+// ADMIN JOBS
+// ============================================================
+
+async function loadAdminJobs() {
+
+    const jobs =
+        await api("/jobs");
+
+    const container =
+        document.getElementById(
+            "adminJobsGrid"
+        );
+
+    const activeJobs =
+        jobs.filter(
+            job =>
+                job.status !== "Completed"
+        );
+
+    if (!activeJobs.length) {
+
+        container.innerHTML =
+            emptyState(
+                "No active services",
+                "Search a vehicle above to start a service intake."
+            );
+
+        return;
+
+    }
+
+    container.innerHTML =
+        activeJobs
+            .map(adminJobCard)
+            .join("");
+
+}
+
+
+// ============================================================
+// ADMIN JOB CARD
+// ============================================================
+
+function adminJobCard(job) {
+
+    return `
+
+        <div class="job-card admin-job-card">
+
+            <div class="job-card-header">
+
+                <div>
+
+                    <span class="job-service-type">
+                        ${escapeHtml(
+                            job.service_type ||
+                            "Service"
+                        )}
+                    </span>
+
+                    <h3>
+                        ${escapeHtml(
+                            job.brand || ""
+                        )}
+                        ${escapeHtml(
+                            job.model || ""
+                        )}
+                    </h3>
+
+                    <div class="registration">
+                        ${escapeHtml(
+                            job.registration_no || ""
+                        )}
+                    </div>
+
+                </div>
+
+                <span class="status-pill ${statusClass(job.status)}">
+                    ${escapeHtml(job.status)}
+                </span>
+
+            </div>
+
+
+            <div class="admin-job-details">
+
+                <div>
+                    <span>Token</span>
+                    <strong>
+                        ${escapeHtml(
+                            job.token_number || "-"
+                        )}
+                    </strong>
+                </div>
+
+                <div>
+                    <span>Customer</span>
+                    <strong>
+                        ${escapeHtml(
+                            job.owner_name ||
+                            "Customer"
+                        )}
+                    </strong>
+                </div>
+
+                <div>
+                    <span>Executive</span>
+                    <strong>
+                        ${escapeHtml(
+                            job.assigned_executive ||
+                            "-"
+                        )}
+                    </strong>
+                </div>
+
+                <div>
+                    <span>Estimate</span>
+                    <strong>
+                        ₹${money(
+                            job.estimate_amount
+                        )}
+                    </strong>
+                </div>
+
+            </div>
+
+
+            <button
+                class="primary-btn full"
+                onclick="openJobUpdate(${job.id})"
+            >
+                Update Service
+            </button>
+
+        </div>
+
+    `;
+
+}
+
+
+// ============================================================
+// JOB UPDATE
+// ============================================================
+
+async function openJobUpdate(jobId) {
+
+    try {
+
+        const data =
+            await api(
+                `/jobs/${jobId}`
+            );
+
+        const job =
+            data.job;
+
+        document.getElementById(
+            "jobUpdateId"
+        ).value = job.id;
+
+        document.getElementById(
+            "jobModalVehicle"
+        ).textContent =
+            `${job.brand || ""} ${
+                job.model || ""
+            } • ${
+                job.registration_no || ""
+            }`;
+
+        document.getElementById(
+            "jobStatus"
+        ).value =
+            job.status || "Received";
+
+        document.getElementById(
+            "jobBill"
+        ).value =
+            job.bill_amount || 0;
+
+        document.getElementById(
+            "jobPaymentMethod"
+        ).value =
+            job.payment_method || "Pending";
+
+        document.getElementById(
+            "jobPaymentStatus"
+        ).value =
+            job.payment_status || "Pending";
+
+        document.getElementById(
+            "jobNextService"
+        ).value =
+            job.next_service_date || "";
+
+        document.getElementById(
+            "jobWorkDone"
+        ).value =
+            job.work_done || "";
+
+        document.getElementById(
+            "jobTechnicianNotes"
+        ).value =
+            job.technician_notes || "";
+
+        document
+            .getElementById("jobModal")
+            .classList.remove("hidden");
+
+    } catch (error) {
+
+        showToast(
+            error.message,
+            "error"
+        );
+
+    }
+
+}
+
+
+async function updateJob(event) {
+
+    event.preventDefault();
+
+    const jobId =
+        document.getElementById(
+            "jobUpdateId"
+        ).value;
+
+    try {
+
+        await api(
+            `/jobs/${jobId}`,
+            {
+                method: "PATCH",
+                body: JSON.stringify({
+
+                    status:
+                        document.getElementById(
+                            "jobStatus"
+                        ).value,
+
+                    bill_amount:
+                        Number(
+                            document.getElementById(
+                                "jobBill"
+                            ).value
+                        ) || 0,
+
+                    payment_method:
+                        document.getElementById(
+                            "jobPaymentMethod"
+                        ).value,
+
+                    payment_status:
+                        document.getElementById(
+                            "jobPaymentStatus"
+                        ).value,
+
+                    next_service_date:
+                        valueOrNull(
+                            document.getElementById(
+                                "jobNextService"
+                            ).value
+                        ),
+
+                    work_done:
+                        valueOrNull(
+                            document.getElementById(
+                                "jobWorkDone"
+                            ).value
+                        ),
+
+                    technician_notes:
+                        valueOrNull(
+                            document.getElementById(
+                                "jobTechnicianNotes"
+                            ).value
+                        )
+
+                })
+            }
+        );
+
+        closeModal("jobModal");
+
+        showToast(
+            "Service updated successfully"
+        );
+
+        await loadAdminJobs();
+
+    } catch (error) {
+
+        showToast(
+            error.message,
+            "error"
+        );
+
+    }
+
+}
+
+
+// ============================================================
+// VEHICLE HISTORY
+// ============================================================
+
+async function openVehicleHistory(vehicleId) {
+
+    try {
+
+        const data =
+            await api(
+                `/vehicles/${vehicleId}`
+            );
+
+        const vehicle =
+            data.vehicle;
+
+        document.getElementById(
+            "historyVehicleTitle"
+        ).textContent =
+            `${vehicle.brand} ${vehicle.model} • ${vehicle.registration_no}`;
+
+        const history =
+            data.history || [];
+
+        const container =
+            document.getElementById(
+                "historyContent"
+            );
+
+        if (!history.length) {
+
+            container.innerHTML =
+                emptyState(
+                    "No service history",
+                    "This vehicle has not completed any service yet."
+                );
+
+        } else {
+
+            container.innerHTML =
+                history
+                    .map(historyItem)
+                    .join("");
+
+        }
+
+        document
+            .getElementById("historyModal")
+            .classList.remove("hidden");
+
+    } catch (error) {
+
+        showToast(
+            error.message,
+            "error"
+        );
+
+    }
+
+}
+
+
+function historyItem(job) {
+
+    return `
+
+        <div class="history-item">
+
+            <div class="history-item-header">
+
+                <div>
+
+                    <span class="job-service-type">
+                        ${escapeHtml(
+                            job.service_type ||
+                            "Service"
+                        )}
+                    </span>
+
+                    <h3>
+                        ${escapeHtml(
+                            job.token_number || "-"
+                        )}
+                    </h3>
+
+                </div>
+
+                <span class="status-pill ${statusClass(job.status)}">
+                    ${escapeHtml(
+                        job.status
+                    )}
+                </span>
+
+            </div>
+
+
+            <div class="history-grid">
+
+                <div>
+                    <span>Date</span>
+                    <strong>
+                        ${formatDate(
+                            job.check_in_date
+                        )}
+                    </strong>
+                </div>
+
+                <div>
+                    <span>Bill</span>
+                    <strong>
+                        ₹${money(
+                            job.bill_amount
+                        )}
+                    </strong>
+                </div>
+
+                <div>
+                    <span>Payment</span>
+                    <strong>
+                        ${escapeHtml(
+                            job.payment_status ||
+                            "Pending"
+                        )}
+                    </strong>
+                </div>
+
+                <div>
+                    <span>Next Service</span>
+                    <strong>
+                        ${formatDate(
+                            job.next_service_date
+                        )}
+                    </strong>
+                </div>
+
+            </div>
+
+
+            ${
+                job.complaint
+                    ? `
+                        <div class="history-note">
+                            <strong>Complaint</strong>
+                            <p>
+                                ${escapeHtml(
+                                    job.complaint
+                                )}
+                            </p>
+                        </div>
+                    `
+                    : ""
+            }
+
+
+            ${
+                job.work_done
+                    ? `
+                        <div class="history-note">
+                            <strong>Work Done</strong>
+                            <p>
+                                ${escapeHtml(
+                                    job.work_done
+                                )}
+                            </p>
+                        </div>
+                    `
+                    : ""
+            }
+
+        </div>
+
+    `;
+
+}
+
+
+// ============================================================
+// NOTIFICATIONS
+// ============================================================
+
+async function loadNotifications() {
+
+    const notifications =
+        await api("/notifications");
+
+    const container =
+        document.getElementById(
+            "notificationsList"
+        );
+
+    const unread =
+        notifications.filter(
+            n => !n.read_at
+        ).length;
+
+    updateNotificationBadge(unread);
+
+    if (!notifications.length) {
+
+        container.innerHTML =
+            emptyState(
+                "No notifications",
+                "Service updates and reminders will appear here."
+            );
+
+        return;
+
+    }
+
+    container.innerHTML =
+        notifications
+            .map(notificationCard)
+            .join("");
+
+}
+
+
+function notificationCard(notification) {
+
+    return `
+
+        <div class="notification-card ${
+            notification.read_at
+                ? ""
+                : "unread"
+        }">
+
+            <div class="notification-icon">
+                🔔
+            </div>
+
+            <div class="notification-content">
+
+                <h3>
+                    ${escapeHtml(
+                        notification.subject
+                    )}
+                </h3>
+
+                <p>
+                    ${escapeHtml(
+                        notification.message
+                    )}
+                </p>
+
+                <small>
+                    ${formatDateTime(
+                        notification.created_at
+                    )}
+                </small>
+
+            </div>
+
+        </div>
+
+    `;
+
+}
+
+
+async function markNotificationsRead() {
+
+    try {
+
+        // Backend marks all current user's notifications
+        // as read.
+
+        await api(
+            "/notifications/read",
+            {
+                method: "POST"
+            }
+        );
+
+        showToast(
+            "Notifications marked as read"
+        );
+
+        await loadNotifications();
+
+    } catch (error) {
+
+        // Current main.py exposes GET only for notifications.
+        // Reload to avoid breaking the UI if route is unavailable.
+
+        showToast(
+            error.message,
+            "error"
+        );
+
+    }
+
+}
+
+
+function updateNotificationBadge(count) {
+
+    const badge =
+        document.getElementById(
+            "notificationBadge"
+        );
+
+    if (count > 0) {
+
+        badge.textContent = count;
+        badge.classList.remove("hidden");
+
+    } else {
+
+        badge.classList.add("hidden");
+
+    }
+
+}
+
+
+// ============================================================
+// FEEDBACK
+// ============================================================
+
+async function loadFeedback() {
+
+    try {
+
+        const feedback =
+            await api("/feedback");
+
+        const container =
+            document.getElementById(
+                "feedbackList"
+            );
+
+        if (!feedback.length) {
+
+            container.innerHTML =
+                emptyState(
+                    "No feedback",
+                    "Customer feedback will appear here."
+                );
+
+            return;
+
+        }
+
+        container.innerHTML =
+            feedback
+                .map(f => `
+
+                    <div class="feedback-card">
+
+                        <div class="feedback-header">
+
+                            <strong>
+                                ${escapeHtml(
+                                    f.customer_name ||
+                                    "Customer"
+                                )}
+                            </strong>
+
+                            <span>
+                                ${"★".repeat(
+                                    f.rating
+                                )}${"☆".repeat(
+                                    5 - f.rating
+                                )}
+                            </span>
+
+                        </div>
+
+                        <p>
+                            ${escapeHtml(
+                                f.comment || ""
+                            )}
+                        </p>
+
+                        <small>
+                            ${formatDateTime(
+                                f.created_at
+                            )}
+                        </small>
+
+                    </div>
+
+                `)
+                .join("");
+
+    } catch (error) {
+
+        showToast(
+            error.message,
+            "error"
+        );
+
+    }
+
+}
+
+
+// ============================================================
+// POLLING
+// ============================================================
+
+function startPolling() {
+
+    if (pollingTimer) {
+        clearInterval(pollingTimer);
+    }
+
+    pollingTimer =
+        setInterval(
+            async () => {
+
+                if (!token) {
+                    return;
+                }
+
+                try {
+
+                    if (
+                        currentPage ===
+                        "dashboard"
+                    ) {
+                        await loadDashboard();
+                    }
+
+                    if (
+                        currentPage ===
+                        "services"
+                    ) {
+                        await loadServices();
+                    }
+
+                    if (
+                        currentPage ===
+                        "vehicles"
+                    ) {
+                        await loadVehicles();
+                    }
+
+                    if (
+                        currentPage ===
+                        "notifications"
+                    ) {
+                        await loadNotifications();
+                    }
+
+                    if (
+                        currentPage ===
+                        "admin"
+                    ) {
+                        await loadAdminJobs();
+                    }
+
+                } catch {
+                    // Silent polling failure
+                }
+
+            },
+            12000
+        );
+
+}
+
+
+// ============================================================
+// MODAL
+// ============================================================
+
+function closeModal(id) {
+
+    document
+        .getElementById(id)
+        .classList.add("hidden");
+
+}
+
+
+document.addEventListener(
+    "click",
+    event => {
+
+        if (
+            event.target.classList.contains(
+                "modal"
+            )
+        ) {
+
+            event.target.classList.add(
+                "hidden"
+            );
+
+        }
+
+    }
+);
+
+
+// ============================================================
+// HELPERS
+// ============================================================
+
+function emptyState(title, message) {
+
+    return `
+
+        <div class="empty-state">
+
+            <div class="empty-icon">
+                📋
+            </div>
+
+            <h3>
+                ${escapeHtml(title)}
+            </h3>
+
+            <p>
+                ${escapeHtml(message)}
+            </p>
+
+        </div>
+
+    `;
+
+}
+
+
+function statusClass(status) {
+
+    const s =
+        String(status || "")
+            .toLowerCase();
+
+    if (
+        s === "completed" ||
+        s === "ready for pickup"
+    ) {
+        return "success";
+    }
+
+    if (
+        s === "received" ||
+        s === "inspection"
+    ) {
+        return "info";
+    }
+
+    if (
+        s === "estimate approved"
+    ) {
+        return "warning";
+    }
+
+    return "progress";
+
+}
+
+
+function formatDate(value) {
+
+    if (!value) {
+        return "-";
+    }
+
+    try {
+
+        return new Date(
+            value
+        ).toLocaleDateString(
+            "en-IN",
+            {
+                day: "2-digit",
+                month: "short",
+                year: "numeric"
+            }
+        );
+
+    } catch {
+
+        return value;
+
+    }
+
+}
+
+
+function formatDateTime(value) {
+
+    if (!value) {
+        return "-";
+    }
+
+    try {
+
+        return new Date(
+            value
+        ).toLocaleString(
+            "en-IN",
+            {
+                day: "2-digit",
+                month: "short",
+                year: "numeric",
+                hour: "2-digit",
+                minute: "2-digit"
+            }
+        );
+
+    } catch {
+
+        return value;
+
+    }
+
+}
+
+
+function money(value) {
+
+    const n =
+        Number(value || 0);
+
+    return n.toLocaleString(
+        "en-IN",
+        {
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 2
+        }
+    );
+
+}
+
+
+function valueOrNull(value) {
+
+    const v =
+        String(value || "").trim();
+
+    return v || null;
+
+}
+
+
+function numberOrNull(value) {
+
+    if (
+        value === null ||
+        value === undefined ||
+        value === ""
+    ) {
+        return null;
+    }
+
+    const n = Number(value);
+
+    return Number.isFinite(n)
+        ? n
+        : null;
+
+}
+
+
+function escapeHtml(value) {
+
+    return String(value ?? "")
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#039;");
+
+}
+
+
+function escapeJs(value) {
+
+    return String(value ?? "")
+        .replaceAll("\\", "\\\\")
+        .replaceAll("'", "\\'")
+        .replaceAll("\n", "\\n")
+        .replaceAll("\r", "\\r");
+
+}
+
+
+function showToast(
+    message,
+    type = "success"
+) {
+
+    const toast =
+        document.getElementById(
+            "toast"
+        );
+
+    toast.textContent = message;
+
+    toast.className =
+        `toast show ${type}`;
+
+    setTimeout(() => {
+
+        toast.className = "toast";
+
+    }, 3500);
+
+}
+
+
+// ============================================================
+// GLOBAL ESC KEY
+// ============================================================
+
+document.addEventListener(
+    "keydown",
+    event => {
+
+        if (event.key !== "Escape") {
+            return;
+        }
+
+        document
+            .querySelectorAll(".modal")
+            .forEach(modal => {
+                modal.classList.add("hidden");
+            });
+
+    }
+);

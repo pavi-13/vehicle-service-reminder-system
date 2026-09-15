@@ -1,9 +1,13 @@
-"""VehicleCare production service workflow.
-
-Supabase Postgres is the source of truth. OTP is intentionally left for the later
-Supabase Auth + SMS/email provider migration.
-"""
-import base64, hashlib, hmac, json, os, secrets, smtplib, urllib.request, urllib.parse
+"""VehicleCare - production-ready FastAPI + Supabase service workflow."""
+import base64
+import hashlib
+import hmac
+import json
+import os
+import secrets
+import smtplib
+import urllib.parse
+import urllib.request
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
@@ -13,306 +17,713 @@ from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
-from supabase import create_client, Client
+from supabase import create_client
 
 ROOT = Path(__file__).parent
 load_dotenv(ROOT / ".env")
-SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+
+SUPABASE_URL = os.getenv("SUPABASE_URL", "").rstrip("/")
+SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
 SECRET = os.getenv("APP_SECRET", "change-this-before-production")
-DEBUG = os.getenv("DEBUG", "false").lower() == "true"
+DEBUG = os.getenv("DEBUG", "true").lower() == "true"
+
 if not SUPABASE_URL or not SUPABASE_SERVICE_ROLE_KEY:
-    raise RuntimeError("SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY must be set")
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
+    # The app can still import locally, but API calls will clearly explain the issue.
+    print("WARNING: SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY are not configured.")
+
 app = FastAPI(title="VehicleCare Service Reminder")
 app.mount("/static", StaticFiles(directory=ROOT / "static"), name="static")
 
-STATUS_FLOW = ["Received","Inspection","Estimate Approved","In Service","Washing","Engine Oil Change","Repair / Parts","Quality Check","Ready for Pickup","Completed"]
-SERVICE_TYPES = ["General Service","Damage Repair","Insurance Claim","Accident Repair","Engine / Mechanical","Body & Paint","AC / Electrical","Other"]
-PROBLEM_TYPES = ["General service","Engine","Brake","Tyre / Wheel","Battery","AC","Electrical","Body damage","Accident damage","Insurance claim","Other"]
+STAGES = [
+    "Received",
+    "Inspection",
+    "Estimate Approved",
+    "In Service",
+    "Washing",
+    "Engine Oil Change",
+    "Repair / Parts",
+    "Quality Check",
+    "Ready for Pickup",
+    "Completed",
+]
 
-def now(): return datetime.now(timezone.utc).isoformat()
-def hash_password(password, salt=None):
+SERVICE_TYPES = [
+    "General Service",
+    "Damage Repair",
+    "Insurance Claim",
+    "Accident Repair",
+    "Engine / Mechanical",
+    "Body & Paint",
+    "AC / Electrical",
+]
+
+PAYMENT_METHODS = ["Pending", "Cash", "Online"]
+PAYMENT_STATUSES = ["Pending", "Paid", "Failed"]
+
+
+def sb():
+    if not SUPABASE_URL or not SUPABASE_SERVICE_ROLE_KEY:
+        raise HTTPException(500, "Supabase environment variables are missing")
+    return create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
+
+
+def now():
+    return datetime.now(timezone.utc).isoformat()
+
+
+def row(data):
+    return data[0] if data else None
+
+
+def hash_password(password: str, salt: Optional[str] = None):
     salt = salt or secrets.token_hex(16)
-    return f"{salt}${hashlib.pbkdf2_hmac('sha256', password.encode(), salt.encode(), 310000).hex()}"
-def check_password(password, stored):
-    try: salt, _ = stored.split("$",1)
-    except ValueError: return False
-    return hmac.compare_digest(hash_password(password,salt), stored)
-def token_for(user):
-    body=base64.urlsafe_b64encode(json.dumps({"id":user["id"],"role":user["role"],"exp":(datetime.now(timezone.utc)+timedelta(days=7)).timestamp()}).encode()).decode().rstrip("=")
-    return body+"."+hmac.new(SECRET.encode(),body.encode(),hashlib.sha256).hexdigest()
-def get_user_by_id(uid):
-    r=supabase.table("users").select("id,name,email,phone,role").eq("id",uid).limit(1).execute()
-    return r.data[0] if r.data else None
-def get_user_by_identifier(x):
-    x=x.strip()
-    r=supabase.table("users").select("*").eq("email",x.lower()).limit(1).execute()
-    if r.data:return r.data[0]
-    r=supabase.table("users").select("*").eq("phone",x).limit(1).execute()
-    return r.data[0] if r.data else None
-def current_user(request:Request):
-    auth=request.headers.get("Authorization","")
-    if not auth.startswith("Bearer "): raise HTTPException(401,"Please login first")
+    digest = hashlib.pbkdf2_hmac("sha256", password.encode(), salt.encode(), 310000)
+    return f"{salt}${digest.hex()}"
+
+
+def check_password(password: str, stored: str):
     try:
-        body,sig=auth[7:].split(".",1)
-        if not hmac.compare_digest(sig,hmac.new(SECRET.encode(),body.encode(),hashlib.sha256).hexdigest()): raise ValueError()
-        p=json.loads(base64.urlsafe_b64decode(body+"=="))
-        if p["exp"]<datetime.now(timezone.utc).timestamp(): raise ValueError()
-        u=get_user_by_id(p["id"])
-        if not u: raise ValueError()
-        return u
-    except Exception: raise HTTPException(401,"Your login has expired. Please login again.")
+        return hmac.compare_digest(hash_password(password, stored.split("$", 1)[0]), stored)
+    except Exception:
+        return False
+
+
+def token_for(user):
+    payload = {
+        "id": user["id"],
+        "role": user["role"],
+        "exp": (datetime.now(timezone.utc) + timedelta(days=7)).timestamp(),
+    }
+    body = base64.urlsafe_b64encode(json.dumps(payload).encode()).decode().rstrip("=")
+    signature = hmac.new(SECRET.encode(), body.encode(), hashlib.sha256).hexdigest()
+    return f"{body}.{signature}"
+
+
+def current_user(request: Request):
+    auth = request.headers.get("Authorization", "")
+    if not auth.startswith("Bearer "):
+        raise HTTPException(401, "Please login first")
+    try:
+        body, signature = auth[7:].split(".", 1)
+        expected = hmac.new(SECRET.encode(), body.encode(), hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(signature, expected):
+            raise ValueError()
+        payload = json.loads(base64.urlsafe_b64decode(body + "=="))
+        if payload["exp"] < datetime.now(timezone.utc).timestamp():
+            raise ValueError()
+        data = sb().table("users").select("id,name,email,phone,role").eq("id", payload["id"]).limit(1).execute().data
+        user = row(data)
+        if not user:
+            raise ValueError()
+        return user
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(401, "Your login has expired. Please login again.")
+
+
 def admin_only(user=Depends(current_user)):
-    if user["role"]!="admin": raise HTTPException(403,"Admin access required")
+    if user["role"] != "admin":
+        raise HTTPException(403, "Admin access required")
     return user
 
-def send_email(to,subject,message):
-    if not to or not os.getenv("SMTP_HOST") or not os.getenv("SMTP_USER"): return False
-    try:
-        sender=os.getenv("EMAIL_FROM",os.getenv("SMTP_USER"))
-        msg=f"From: {sender}\r\nTo: {to}\r\nSubject: {subject}\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n{message}"
-        with smtplib.SMTP_SSL(os.getenv("SMTP_HOST"),int(os.getenv("SMTP_PORT","465")),timeout=12) as s:
-            s.login(os.getenv("SMTP_USER"),os.getenv("SMTP_PASSWORD","")); s.sendmail(sender,[to],msg.encode())
-        return True
-    except Exception: return False
-def send_sms(phone,message):
-    sid,auth,sender=os.getenv("TWILIO_ACCOUNT_SID"),os.getenv("TWILIO_AUTH_TOKEN"),os.getenv("TWILIO_FROM")
-    if not phone or not (sid and auth and sender): return False
-    try:
-        body=urllib.parse.urlencode({"To":phone,"From":sender,"Body":message}).encode()
-        req=urllib.request.Request(f"https://api.twilio.com/2010-04-01/Accounts/{sid}/Messages.json",data=body,method="POST")
-        req.add_header("Authorization","Basic "+base64.b64encode(f"{sid}:{auth}".encode()).decode())
-        urllib.request.urlopen(req,timeout=12).close(); return True
-    except Exception:return False
-def notify(uid,subject,message):
-    created=now()
-    try:
-        supabase.table("notifications").insert({"user_id":uid,"subject":subject,"message":message,"channels":"in_app,email,sms","created_at":created}).execute()
-        supabase.table("realtime_notifications").insert({"recipient_id":uid,"subject":subject,"message":message,"channels":"in_app,email,sms","created_at":created}).execute()
-    except Exception: pass
-    u=get_user_by_id(uid)
-    if u:
-        send_email(u.get("email"),subject,message); send_sms(u.get("phone"),"VehicleCare: "+message)
 
-def vehicle_for(vid):
-    r=supabase.table("vehicles").select("*").eq("id",vid).limit(1).execute()
-    return r.data[0] if r.data else None
-def job_for(jid):
-    r=supabase.table("service_jobs").select("*").eq("id",jid).limit(1).execute()
-    return r.data[0] if r.data else None
-def job_view(job):
-    v=vehicle_for(job["vehicle_id"])
-    if not v:return None
-    u=get_user_by_id(v["owner_id"]) or {}
-    job=dict(job); job.update({"brand":v["brand"],"model":v["model"],"type":v["type"],"registration_no":v["registration_no"],
-        "owner_id":v["owner_id"],"owner_name":u.get("name"),"owner_email":u.get("email"),"owner_phone":u.get("phone")})
+def send_email(recipient, subject, message):
+    if not recipient or not os.getenv("SMTP_HOST") or not os.getenv("SMTP_USER"):
+        return
+    sender = os.getenv("EMAIL_FROM", os.getenv("SMTP_USER"))
+    content = (
+        f"From: {sender}\r\nTo: {recipient}\r\nSubject: {subject}\r\n"
+        "Content-Type: text/plain; charset=utf-8\r\n\r\n" + message
+    )
+    with smtplib.SMTP_SSL(os.getenv("SMTP_HOST"), int(os.getenv("SMTP_PORT", "465")), timeout=12) as smtp:
+        smtp.login(os.getenv("SMTP_USER"), os.getenv("SMTP_PASSWORD", ""))
+        smtp.sendmail(sender, [recipient], content.encode("utf-8"))
+
+
+def send_sms(phone, message):
+    sid = os.getenv("TWILIO_ACCOUNT_SID")
+    auth = os.getenv("TWILIO_AUTH_TOKEN")
+    sender = os.getenv("TWILIO_FROM")
+    if not phone or not (sid and auth and sender):
+        return
+    body = urllib.parse.urlencode({"To": phone, "From": sender, "Body": message}).encode()
+    req = urllib.request.Request(
+        f"https://api.twilio.com/2010-04-01/Accounts/{sid}/Messages.json",
+        data=body,
+        method="POST",
+    )
+    req.add_header("Authorization", "Basic " + base64.b64encode(f"{sid}:{auth}".encode()).decode())
+    with urllib.request.urlopen(req, timeout=12):
+        pass
+
+
+def notify(user_id, subject, message, channels="email,sms"):
+    client = sb()
+    created = now()
+    client.table("notifications").insert({
+        "user_id": user_id,
+        "subject": subject,
+        "message": message,
+        "channels": channels,
+        "created_at": created,
+    }).execute()
+
+    user = row(client.table("users").select("email,phone").eq("id", user_id).limit(1).execute().data)
+    if not user:
+        return
+    try:
+        send_email(user.get("email"), subject, message)
+        send_sms(user.get("phone"), f"VehicleCare: {message}")
+    except Exception:
+        pass
+
+
+def generate_token():
+    return f"VC-{datetime.now().strftime('%y%m%d')}-{secrets.randbelow(9000)+1000}"
+
+
+def get_job(job_id: int):
+    client = sb()
+    jobs = client.table("service_jobs").select(
+        "*, vehicles!inner(id,owner_id,type,brand,model,registration_no,year), "
+        "users!vehicles_owner_id_fkey(id,name,email,phone)"
+    ).eq("id", job_id).limit(1).execute().data
+    if jobs:
+        return jobs[0]
+    # Fallback if a generated FK relationship name differs.
+    job = row(client.table("service_jobs").select("*").eq("id", job_id).limit(1).execute().data)
+    if not job:
+        return None
+    vehicle = row(client.table("vehicles").select("*").eq("id", job["vehicle_id"]).limit(1).execute().data)
+    owner = row(client.table("users").select("id,name,email,phone").eq("id", vehicle["owner_id"]).limit(1).execute().data) if vehicle else None
+    job["vehicle"] = vehicle
+    job["owner"] = owner
     return job
 
+
+def enrich_job(job):
+    if "vehicles" in job:
+        vehicle = job["vehicles"]
+        job["brand"] = vehicle.get("brand")
+        job["model"] = vehicle.get("model")
+        job["type"] = vehicle.get("type")
+        job["registration_no"] = vehicle.get("registration_no")
+        job["owner_id"] = vehicle.get("owner_id")
+        job["owner_name"] = (job.get("users") or {}).get("name")
+    elif job.get("vehicle"):
+        vehicle = job["vehicle"]
+        owner = job.get("owner") or {}
+        job["brand"] = vehicle.get("brand")
+        job["model"] = vehicle.get("model")
+        job["type"] = vehicle.get("type")
+        job["registration_no"] = vehicle.get("registration_no")
+        job["owner_id"] = vehicle.get("owner_id")
+        job["owner_name"] = owner.get("name")
+    return job
+
+
+def timeline_for(job_id: int):
+    client = sb()
+    data = client.table("service_timeline").select("*").eq("job_id", job_id).order("stage_order").execute().data
+    return data or []
+
+
+def build_job_response(job):
+    job = enrich_job(job)
+    job["timeline"] = timeline_for(job["id"])
+    return job
+
+
 class RegisterIn(BaseModel):
-    name:str=Field(min_length=2,max_length=80); email:Optional[str]=None; phone:Optional[str]=None; password:str=Field(min_length=6,max_length=128)
-class LoginIn(BaseModel): identifier:str; password:str
-class OTPIn(BaseModel): identifier:str
-class VerifyOTPIn(OTPIn): code:str
+    name: str = Field(min_length=2, max_length=80)
+    email: Optional[str] = None
+    phone: Optional[str] = None
+    password: str = Field(min_length=6, max_length=128)
+
+
+class LoginIn(BaseModel):
+    identifier: str
+    password: str
+
+
 class VehicleIn(BaseModel):
-    type:str; brand:str; model:str; registration_no:str; year:Optional[int]=None; last_service_date:Optional[str]=None; next_service_date:Optional[str]=None; notes:Optional[str]=None
+    type: str
+    brand: str
+    model: str
+    registration_no: str
+    year: Optional[int] = None
+    last_service_date: Optional[str] = None
+    next_service_date: Optional[str] = None
+    notes: Optional[str] = None
+
+
 class JobIn(BaseModel):
-    vehicle_id:int; service_type:str="General Service"; problem_type:str="General service"; complaint:str=""
-    damage_notes:Optional[str]=None; insurance_claim:bool=False; estimate_amount:float=0; status:str="Received"
-    expected_delivery_date:Optional[str]=None; odometer:Optional[int]=None; assigned_to:Optional[str]=None
+    vehicle_id: int
+    check_in_date: str = Field(default_factory=lambda: date.today().isoformat())
+    expected_delivery_date: Optional[str] = None
+    service_type: str = "General Service"
+    complaint: Optional[str] = None
+    damage_details: Optional[str] = None
+    insurance_details: Optional[str] = None
+    estimate_amount: float = 0
+    odometer: Optional[int] = None
+    assigned_executive: Optional[str] = None
+
+
 class StatusIn(BaseModel):
-    status:str; work_done:Optional[str]=None; technician_notes:Optional[str]=None; bill_amount:Optional[float]=None
-    next_service_date:Optional[str]=None; expected_delivery_date:Optional[str]=None; assigned_to:Optional[str]=None
-class EventIn(BaseModel): status:str; note:Optional[str]=""; technician:Optional[str]=None
-class PaymentIn(BaseModel): method:str; amount:float=Field(ge=0)
-class FeedbackIn(BaseModel): job_id:Optional[int]=None; rating:int=Field(ge=1,le=5); comment:Optional[str]=""
-class ChatIn(BaseModel): message:str=Field(min_length=1,max_length=1500)
+    status: str
+    technician_notes: Optional[str] = None
+    work_done: Optional[str] = None
+    bill_amount: Optional[float] = None
+    next_service_date: Optional[str] = None
+    payment_method: Optional[str] = None
+    payment_status: Optional[str] = None
+
+
+class FeedbackIn(BaseModel):
+    job_id: Optional[int] = None
+    rating: int = Field(ge=1, le=5)
+    comment: Optional[str] = Field(default="", max_length=1000)
+
+
+class ChatIn(BaseModel):
+    message: str = Field(min_length=1, max_length=1500)
+
 
 @app.get("/")
-def home(): return FileResponse(ROOT/"static"/"index.html")
+def home():
+    return FileResponse(ROOT / "static" / "index.html")
 
-@app.post("/api/auth/register")
-def register(d:RegisterIn):
-    if not d.email and not d.phone: raise HTTPException(400,"Enter an email address or mobile number")
-    email=d.email.lower().strip() if d.email else None; phone=d.phone.strip() if d.phone else None
-    try:
-        if email and supabase.table("users").select("id").eq("email",email).limit(1).execute().data: raise HTTPException(409,"This email is already registered")
-        if phone and supabase.table("users").select("id").eq("phone",phone).limit(1).execute().data: raise HTTPException(409,"This mobile number is already registered")
-        r=supabase.table("users").insert({"name":d.name.strip(),"email":email,"phone":phone,"password_hash":hash_password(d.password),"role":"customer","created_at":now()}).execute()
-        if not r.data: raise HTTPException(500,"Could not create account")
-        u={k:r.data[0].get(k) for k in ("id","name","email","phone","role")}; notify(u["id"],"Welcome to VehicleCare","Your account is ready. Add your vehicle to receive service reminders.")
-        return {"token":token_for(u),"user":u}
-    except HTTPException: raise
-    except Exception as e:
-        if "duplicate" in str(e).lower() or "unique" in str(e).lower(): raise HTTPException(409,"Email or mobile number is already registered")
-        raise HTTPException(500,"Account creation failed")
-
-@app.post("/api/auth/login")
-def login(d:LoginIn):
-    u=get_user_by_identifier(d.identifier)
-    if not u or not check_password(d.password,u.get("password_hash","")): raise HTTPException(401,"Invalid email/mobile number or password")
-    p={k:u.get(k) for k in ("id","name","email","phone","role")}; return {"token":token_for(p),"user":p}
-@app.post("/api/auth/request-otp")
-def request_otp(d:OTPIn): raise HTTPException(501,"Real OTP will be connected later")
-@app.post("/api/auth/verify-otp")
-def verify_otp(d:VerifyOTPIn): raise HTTPException(501,"Real OTP will be connected later")
-@app.get("/api/me")
-def me(u=Depends(current_user)): return u
-
-@app.get("/api/vehicles")
-def vehicles(u=Depends(current_user)):
-    r=supabase.table("vehicles").select("*").order("id",desc=True).execute()
-    out=[]
-    for v in r.data or []:
-        if u["role"]!="admin" and v["owner_id"]!=u["id"]: continue
-        v=dict(v); owner=get_user_by_id(v["owner_id"]) or {}; v["owner_name"]=owner.get("name"); out.append(v)
-    return out
-@app.post("/api/vehicles")
-def add_vehicle(d:VehicleIn,u=Depends(current_user)):
-    r=supabase.table("vehicles").insert({"owner_id":u["id"],"type":d.type,"brand":d.brand,"model":d.model,"registration_no":d.registration_no.upper(),
-        "year":d.year,"last_service_date":d.last_service_date,"next_service_date":d.next_service_date,"notes":d.notes,"created_at":now()}).execute()
-    if not r.data: raise HTTPException(500,"Could not add vehicle")
-    return r.data[0]
-@app.delete("/api/vehicles/{vid}")
-def delete_vehicle(vid:int,u=Depends(current_user)):
-    v=vehicle_for(vid)
-    if not v or (u["role"]!="admin" and v["owner_id"]!=u["id"]): raise HTTPException(404,"Vehicle not found")
-    supabase.table("vehicles").delete().eq("id",vid).execute(); return {"ok":True}
-
-@app.get("/api/jobs")
-def jobs(u=Depends(current_user)):
-    r=supabase.table("service_jobs").select("*").order("id",desc=True).execute(); out=[]
-    for j in r.data or []:
-        x=job_view(j)
-        if x and (u["role"]=="admin" or x["owner_id"]==u["id"]): out.append(x)
-    return out
-@app.post("/api/jobs")
-def create_job(d:JobIn,admin=Depends(admin_only)):
-    v=vehicle_for(d.vehicle_id)
-    if not v: raise HTTPException(404,"Vehicle not found")
-    token=f"VC-{datetime.now().strftime('%y%m%d')}-{secrets.randbelow(900)+100}"
-    payload={"vehicle_id":d.vehicle_id,"token_no":token,"service_type":d.service_type,"problem_type":d.problem_type,"complaint":d.complaint,
-        "damage_notes":d.damage_notes,"insurance_claim":d.insurance_claim,"estimate_amount":d.estimate_amount,"status":d.status,
-        "check_in_date":date.today().isoformat(),"expected_delivery_date":d.expected_delivery_date,"odometer":d.odometer,"assigned_to":d.assigned_to,"created_at":now()}
-    r=supabase.table("service_jobs").insert(payload).execute()
-    if not r.data: raise HTTPException(500,"Could not create service job")
-    j=r.data[0]
-    supabase.table("service_events").insert({"job_id":j["id"],"status":d.status,"note":"Vehicle checked in and token created.","technician":d.assigned_to,"created_at":now()}).execute()
-    notify(v["owner_id"],"Vehicle received",f"Token {token}: {v['brand']} {v['model']} ({v['registration_no']}) checked in. Current status: {d.status}.")
-    return job_view(j)
-
-@app.patch("/api/jobs/{jid}")
-def update_job(jid:int,d:StatusIn,admin=Depends(admin_only)):
-    if d.status not in STATUS_FLOW: raise HTTPException(400,"Invalid service status")
-    j=job_for(jid)
-    if not j: raise HTTPException(404,"Job not found")
-    v=vehicle_for(j["vehicle_id"])
-    patch={"status":d.status}
-    for k in ("work_done","technician_notes","bill_amount","next_service_date","expected_delivery_date","assigned_to"):
-        val=getattr(d,k)
-        if val is not None: patch[k]=val
-    if d.status=="Completed": patch["completed_at"]=now()
-    r=supabase.table("service_jobs").update(patch).eq("id",jid).execute()
-    supabase.table("service_events").insert({"job_id":jid,"status":d.status,"note":d.work_done or d.technician_notes or "Status updated by service centre.","technician":d.assigned_to or j.get("assigned_to"),"created_at":now()}).execute()
-    if d.next_service_date: supabase.table("vehicles").update({"last_service_date":date.today().isoformat(),"next_service_date":d.next_service_date}).eq("id",j["vehicle_id"]).execute()
-    if d.status=="Completed":
-        bill=float(d.bill_amount if d.bill_amount is not None else j.get("bill_amount") or 0)
-        report=d.work_done or j.get("work_done") or "Service completed."
-        msg=f"{v['brand']} {v['model']} ({v['registration_no']}) service completed. Bill: ₹{bill:.2f}. Report: {report}. Payment can be completed online or at pickup by cash."
-        notify(v["owner_id"],"Service completed - bill & report",msg)
-    else: notify(v["owner_id"],"Service update",f"Token {j.get('token_no','')}: {v['brand']} {v['model']} status changed to {d.status}.")
-    return {"ok":True,"job":job_view({**j,**patch})}
-
-@app.get("/api/jobs/{jid}/timeline")
-def timeline(jid:int,u=Depends(current_user)):
-    j=job_for(jid)
-    if not j: raise HTTPException(404,"Job not found")
-    v=vehicle_for(j["vehicle_id"])
-    if u["role"]!="admin" and (not v or v["owner_id"]!=u["id"]): raise HTTPException(403,"Not allowed")
-    r=supabase.table("service_events").select("*").eq("job_id",jid).order("id",desc=False).execute()
-    return r.data or []
-
-@app.post("/api/jobs/{jid}/events")
-def add_event(jid:int,d:EventIn,admin=Depends(admin_only)):
-    if d.status not in STATUS_FLOW: raise HTTPException(400,"Invalid status")
-    j=job_for(jid)
-    if not j: raise HTTPException(404,"Job not found")
-    v=vehicle_for(j["vehicle_id"])
-    supabase.table("service_events").insert({"job_id":jid,"status":d.status,"note":d.note or "Service progress updated.","technician":d.technician or j.get("assigned_to"),"created_at":now()}).execute()
-    supabase.table("service_jobs").update({"status":d.status,"assigned_to":d.technician or j.get("assigned_to")}).eq("id",jid).execute()
-    notify(v["owner_id"],"Live service progress",f"Token {j.get('token_no','')}: {v['brand']} {v['model']} is now at '{d.status}'. {d.note or ''}".strip())
-    return {"ok":True}
-
-@app.post("/api/jobs/{jid}/payment")
-def payment(jid:int,d:PaymentIn,u=Depends(current_user)):
-    j=job_for(jid)
-    if not j: raise HTTPException(404,"Job not found")
-    v=vehicle_for(j["vehicle_id"])
-    if u["role"]!="admin" and v["owner_id"]!=u["id"]: raise HTTPException(403,"Not allowed")
-    method=d.method.lower()
-    if method not in ("online","cash"): raise HTTPException(400,"Payment method must be online or cash")
-    status="Paid" if method=="online" else "Cash at pickup"
-    r=supabase.table("payments").insert({"job_id":jid,"amount":d.amount,"method":method,"status":status,"paid_at":now() if method=="online" else None,"created_at":now()}).execute()
-    if not r.data: raise HTTPException(500,"Could not save payment")
-    if method=="online": notify(v["owner_id"],"Payment received",f"Payment of ₹{d.amount:.2f} received for token {j.get('token_no','')}.")
-    return r.data[0]
-
-@app.get("/api/jobs/{jid}/payments")
-def payments(jid:int,u=Depends(current_user)):
-    j=job_for(jid)
-    if not j: raise HTTPException(404,"Job not found")
-    v=vehicle_for(j["vehicle_id"])
-    if u["role"]!="admin" and v["owner_id"]!=u["id"]: raise HTTPException(403,"Not allowed")
-    return supabase.table("payments").select("*").eq("job_id",jid).order("id",desc=True).execute().data or []
-
-@app.get("/api/notifications")
-def notifications(u=Depends(current_user)):
-    return supabase.table("notifications").select("*").eq("user_id",u["id"]).order("id",desc=True).limit(50).execute().data or []
-@app.get("/api/dashboard")
-def dashboard(u=Depends(current_user)):
-    vs=supabase.table("vehicles").select("*").execute().data or []; js=supabase.table("service_jobs").select("*").execute().data or []
-    if u["role"]=="customer":
-        vs=[v for v in vs if v["owner_id"]==u["id"]]; ids={v["id"] for v in vs}; js=[j for j in js if j["vehicle_id"] in ids]
-    today=date.today().isoformat()
-    return {"vehicles":len(vs),"active_jobs":sum(j["status"]!="Completed" for j in js),"completed_jobs":sum(j["status"]=="Completed" for j in js),
-            "due_services":sum(bool(v.get("next_service_date") and v["next_service_date"]<=today) for v in vs)}
-
-@app.get("/api/service-options")
-def service_options(admin=Depends(admin_only)): return {"statuses":STATUS_FLOW,"service_types":SERVICE_TYPES,"problem_types":PROBLEM_TYPES}
-
-@app.post("/api/feedback")
-def feedback(d:FeedbackIn,u=Depends(current_user)):
-    r=supabase.table("feedback").insert({"user_id":u["id"],"job_id":d.job_id,"rating":d.rating,"comment":d.comment,"created_at":now()}).execute()
-    return {"ok":bool(r.data)}
-@app.get("/api/feedback")
-def list_feedback(admin=Depends(admin_only)):
-    r=supabase.table("feedback").select("*").order("id",desc=True).execute().data or []
-    for x in r: x["customer_name"]=(get_user_by_id(x["user_id"]) or {}).get("name")
-    return r
-
-@app.post("/api/chat")
-def chat(d:ChatIn,u=Depends(current_user)):
-    m=d.message.lower()
-    if "status" in m or "service" in m:return {"reply":"Open My Service to see your live timeline, current stage, complaint and service report.","mode":"built-in help"}
-    if "bill" in m or "payment" in m:return {"reply":"When your service is completed, the bill and report appear in My Service. You can choose online payment or cash at pickup.","mode":"built-in help"}
-    if "reminder" in m or "due" in m:return {"reply":"Your next-service date and reminders are available in Reminders.","mode":"built-in help"}
-    return {"reply":"I can help with service status, timeline, bill, payment, reminders and vehicle details.","mode":"built-in help"}
 
 @app.get("/api/health")
-def health(): return {"status":"ok","time":now()}
-@app.get("/api/realtime-config")
-def realtime_config(u=Depends(current_user)):
-    url=os.getenv("SUPABASE_URL"); key=os.getenv("SUPABASE_ANON_KEY")
-    return {"enabled":bool(url and key),"url":url if url and key else None,"anon_key":key if url and key else None}
-@app.get("/api/cron/send-reminders")
-def send_reminders(request:Request):
-    secret=os.getenv("CRON_SECRET")
-    if secret and request.headers.get("Authorization")!=f"Bearer {secret}": raise HTTPException(401,"Invalid cron authorization")
-    today=date.today(); limit=(today+timedelta(days=30)).isoformat(); sent=0
-    vs=supabase.table("vehicles").select("*").not_.is_("next_service_date","null").lte("next_service_date",limit).execute().data or []
+def health():
+    return {"status": "ok", "time": now(), "database": "supabase"}
+
+
+@app.post("/api/auth/register")
+def register(data: RegisterIn):
+    if not data.email and not data.phone:
+        raise HTTPException(400, "Enter an email address or mobile number")
+
+    client = sb()
+    email = data.email.lower().strip() if data.email else None
+    phone = data.phone.strip() if data.phone else None
+
+    if email and client.table("users").select("id").eq("email", email).limit(1).execute().data:
+        raise HTTPException(409, "This email is already registered")
+    if phone and client.table("users").select("id").eq("phone", phone).limit(1).execute().data:
+        raise HTTPException(409, "This mobile number is already registered")
+
+    created = client.table("users").insert({
+        "name": data.name.strip(),
+        "email": email,
+        "phone": phone,
+        "password_hash": hash_password(data.password),
+        "role": "customer",
+    }).execute().data
+    user = row(created)
+    if not user:
+        raise HTTPException(500, "Could not create account")
+
+    try:
+        notify(user["id"], "Welcome to VehicleCare", "Your account is ready. Add your vehicle to begin.")
+    except Exception:
+        pass
+    return {"token": token_for(user), "user": {k: user.get(k) for k in ("id","name","email","phone","role")}}
+
+
+@app.post("/api/auth/login")
+def login(data: LoginIn):
+    identifier = data.identifier.strip()
+    client = sb()
+    by_email = client.table("users").select("*").ilike("email", identifier).limit(1).execute().data if "@" in identifier else []
+    user = row(by_email)
+    if not user:
+        user = row(client.table("users").select("*").eq("phone", identifier).limit(1).execute().data)
+    if not user or not check_password(data.password, user.get("password_hash", "")):
+        raise HTTPException(401, "Invalid email/mobile number or password")
+    public = {k: user.get(k) for k in ("id","name","email","phone","role")}
+    return {"token": token_for(public), "user": public}
+
+
+@app.get("/api/me")
+def me(user=Depends(current_user)):
+    return user
+
+
+@app.get("/api/vehicles")
+def vehicles(user=Depends(current_user)):
+    client = sb()
+    query = client.table("vehicles").select("*")
+    if user["role"] != "admin":
+        query = query.eq("owner_id", user["id"])
+    data = query.order("id", desc=True).execute().data or []
+
+    for v in data:
+        jobs = client.table("service_jobs").select("id,status,service_type,token_number,check_in_date,bill_amount,payment_status").eq("vehicle_id", v["id"]).order("id", desc=True).execute().data or []
+        v["service_count"] = len(jobs)
+        v["current_job"] = jobs[0] if jobs and jobs[0].get("status") != "Completed" else None
+        v["last_job"] = jobs[0] if jobs else None
+    return data
+
+
+@app.get("/api/vehicles/{vehicle_id}")
+def vehicle_detail(vehicle_id: int, user=Depends(current_user)):
+    client = sb()
+    vehicle = row(client.table("vehicles").select("*").eq("id", vehicle_id).limit(1).execute().data)
+    if not vehicle:
+        raise HTTPException(404, "Vehicle not found")
+    if user["role"] != "admin" and vehicle["owner_id"] != user["id"]:
+        raise HTTPException(404, "Vehicle not found")
+
+    owner = row(client.table("users").select("id,name,email,phone").eq("id", vehicle["owner_id"]).limit(1).execute().data)
+    jobs = client.table("service_jobs").select("*").eq("vehicle_id", vehicle_id).order("id", desc=True).execute().data or []
+    for j in jobs:
+        j["timeline"] = timeline_for(j["id"])
+    return {"vehicle": vehicle, "owner": owner, "service_count": len(jobs), "history": jobs}
+
+
+@app.post("/api/vehicles")
+def add_vehicle(data: VehicleIn, user=Depends(current_user)):
+    client = sb()
+    registration = data.registration_no.strip().upper()
+    existing = client.table("vehicles").select("id").eq("registration_no", registration).limit(1).execute().data
+    if existing:
+        raise HTTPException(409, "This registration number is already registered")
+    created = client.table("vehicles").insert({
+        "owner_id": user["id"],
+        "type": data.type,
+        "brand": data.brand.strip(),
+        "model": data.model.strip(),
+        "registration_no": registration,
+        "year": data.year,
+        "last_service_date": data.last_service_date,
+        "next_service_date": data.next_service_date,
+        "notes": data.notes,
+    }).execute().data
+    return row(created)
+
+
+@app.delete("/api/vehicles/{vehicle_id}")
+def delete_vehicle(vehicle_id: int, user=Depends(current_user)):
+    client = sb()
+    vehicle = row(client.table("vehicles").select("*").eq("id", vehicle_id).limit(1).execute().data)
+    if not vehicle or (user["role"] != "admin" and vehicle["owner_id"] != user["id"]):
+        raise HTTPException(404, "Vehicle not found")
+    client.table("vehicles").delete().eq("id", vehicle_id).execute()
+    return {"ok": True}
+
+
+@app.get("/api/jobs")
+def jobs(user=Depends(current_user)):
+    client = sb()
+    vehicles_query = client.table("vehicles").select("*")
+    if user["role"] != "admin":
+        vehicles_query = vehicles_query.eq("owner_id", user["id"])
+    vs = vehicles_query.execute().data or []
+    vehicle_map = {v["id"]: v for v in vs}
+    if not vehicle_map:
+        return []
+
+    ids = list(vehicle_map.keys())
+    data = client.table("service_jobs").select("*").in_("vehicle_id", ids).order("id", desc=True).execute().data or []
+    owners = {}
     for v in vs:
-        if supabase.table("notifications").select("id").eq("user_id",v["owner_id"]).eq("subject","Service reminder").gte("created_at",today.isoformat()).limit(1).execute().data: continue
-        overdue=v["next_service_date"]<today.isoformat()
-        notify(v["owner_id"],"Service reminder",f"Your {v['brand']} {v['model']} ({v['registration_no']}) service is {'overdue' if overdue else 'due on '+v['next_service_date']}.")
-        sent+=1
-    return {"ok":True,"reminders_sent":sent}
+        owners[v["owner_id"]] = v
+    result = []
+    for j in data:
+        v = vehicle_map.get(j["vehicle_id"], {})
+        j.update({
+            "brand": v.get("brand"),
+            "model": v.get("model"),
+            "type": v.get("type"),
+            "registration_no": v.get("registration_no"),
+            "owner_id": v.get("owner_id"),
+        })
+        owner = row(client.table("users").select("id,name,email,phone").eq("id", v.get("owner_id")).limit(1).execute().data)
+        j["owner_name"] = owner.get("name") if owner else "Customer"
+        j["timeline"] = timeline_for(j["id"])
+        result.append(j)
+    return result
+
+
+@app.post("/api/jobs")
+def create_job(data: JobIn, admin=Depends(admin_only)):
+    if data.service_type not in SERVICE_TYPES:
+        raise HTTPException(400, "Invalid service type")
+
+    client = sb()
+    vehicle = row(client.table("vehicles").select("*").eq("id", data.vehicle_id).limit(1).execute().data)
+    if not vehicle:
+        raise HTTPException(404, "Vehicle not found")
+
+    active = client.table("service_jobs").select("id,status").eq("vehicle_id", data.vehicle_id).neq("status", "Completed").limit(1).execute().data
+    if active:
+        raise HTTPException(409, "This vehicle already has an active service job")
+
+    token_number = generate_token()
+    payload = {
+        "vehicle_id": data.vehicle_id,
+        "token_number": token_number,
+        "status": "Received",
+        "check_in_date": data.check_in_date,
+        "expected_delivery_date": data.expected_delivery_date,
+        "service_type": data.service_type,
+        "complaint": data.complaint,
+        "damage_details": data.damage_details,
+        "insurance_details": data.insurance_details,
+        "estimate_amount": data.estimate_amount,
+        "odometer": data.odometer,
+        "assigned_executive": data.assigned_executive,
+        "bill_amount": 0,
+        "payment_method": "Pending",
+        "payment_status": "Pending",
+        "created_at": now(),
+    }
+    created = client.table("service_jobs").insert(payload).execute().data
+    job = row(created)
+    if not job:
+        raise HTTPException(500, "Could not create service job")
+
+    timeline_rows = []
+    for i, stage in enumerate(STAGES):
+        timeline_rows.append({
+            "job_id": job["id"],
+            "stage": stage,
+            "stage_order": i,
+            "status": "Current" if i == 0 else "Pending",
+            "notes": "Vehicle checked in" if i == 0 else None,
+            "updated_at": now() if i == 0 else None,
+        })
+    client.table("service_timeline").insert(timeline_rows).execute()
+
+    message = (
+        f"Your {vehicle['brand']} {vehicle['model']} ({vehicle['registration_no']}) "
+        f"is checked in. Token: {token_number}. Service: {data.service_type}. "
+        "Current status: Received."
+    )
+    try:
+        notify(vehicle["owner_id"], "Vehicle checked in", message)
+    except Exception:
+        pass
+    return build_job_response(job)
+
+
+@app.patch("/api/jobs/{job_id}")
+def update_job(job_id: int, data: StatusIn, admin=Depends(admin_only)):
+    if data.status not in STAGES:
+        raise HTTPException(400, "Invalid service status")
+    if data.payment_method and data.payment_method not in PAYMENT_METHODS:
+        raise HTTPException(400, "Invalid payment method")
+    if data.payment_status and data.payment_status not in PAYMENT_STATUSES:
+        raise HTTPException(400, "Invalid payment status")
+
+    client = sb()
+    job = row(client.table("service_jobs").select("*").eq("id", job_id).limit(1).execute().data)
+    if not job:
+        raise HTTPException(404, "Service job not found")
+    vehicle = row(client.table("vehicles").select("*").eq("id", job["vehicle_id"]).limit(1).execute().data)
+    if not vehicle:
+        raise HTTPException(404, "Vehicle not found")
+
+    update = {
+        "status": data.status,
+        "updated_at": now(),
+    }
+    for key in ("technician_notes", "work_done", "bill_amount", "next_service_date", "payment_method", "payment_status"):
+        value = getattr(data, key)
+        if value is not None:
+            update[key] = value
+    if data.status == "Completed":
+        update["completed_at"] = now()
+
+    updated = row(client.table("service_jobs").update(update).eq("id", job_id).execute().data)
+
+    # Mark timeline stages.
+    current_index = STAGES.index(data.status)
+    for i, stage in enumerate(STAGES):
+        if i < current_index:
+            stage_status = "Completed"
+        elif i == current_index:
+            stage_status = "Current" if data.status != "Completed" else "Completed"
+        else:
+            stage_status = "Pending"
+        client.table("service_timeline").update({
+            "status": stage_status,
+            "updated_at": now() if i <= current_index else None,
+        }).eq("job_id", job_id).eq("stage_order", i).execute()
+
+    if data.next_service_date:
+        client.table("vehicles").update({
+            "last_service_date": date.today().isoformat(),
+            "next_service_date": data.next_service_date,
+        }).eq("id", vehicle["id"]).execute()
+
+    message = f"{vehicle['brand']} {vehicle['model']} ({vehicle['registration_no']}) status updated to {data.status}."
+    if data.status == "Completed":
+        message += (
+            f" Bill: ₹{float(update.get('bill_amount', job.get('bill_amount') or 0)):.2f}."
+            f" Payment: {update.get('payment_method', job.get('payment_method') or 'Pending')}."
+            f" Report: {update.get('work_done', job.get('work_done') or 'Service completed')}."
+        )
+    try:
+        notify(vehicle["owner_id"], "Service update", message)
+    except Exception:
+        pass
+
+    return {"ok": True, "message": message, "job": build_job_response(updated or job)}
+
+
+@app.get("/api/notifications")
+def notifications(user=Depends(current_user)):
+    return sb().table("notifications").select("*").eq("user_id", user["id"]).order("id", desc=True).limit(50).execute().data or []
+
+@app.post("/api/notifications/read")
+def mark_notifications_read(user=Depends(current_user)):
+    client = sb()
+
+    client.table("notifications").update({
+        "read_at": now()
+    }).eq(
+        "user_id",
+        user["id"]
+    ).is_(
+        "read_at",
+        "null"
+    ).execute()
+
+    return {
+        "ok": True,
+        "message": "Notifications marked as read"
+    }
+
+@app.get("/api/dashboard")
+def dashboard(user=Depends(current_user)):
+    client = sb()
+    if user["role"] == "admin":
+        vehicles = client.table("vehicles").select("id", count="exact").execute()
+        jobs = client.table("service_jobs").select("id,status").execute().data or []
+        due = client.table("vehicles").select("id").lte("next_service_date", date.today().isoformat()).execute().data or []
+    else:
+        vehicles = client.table("vehicles").select("id", count="exact").eq("owner_id", user["id"]).execute()
+        vs = client.table("vehicles").select("id").eq("owner_id", user["id"]).execute().data or []
+        ids = [v["id"] for v in vs]
+        jobs = client.table("service_jobs").select("id,status").in_("vehicle_id", ids).execute().data if ids else []
+        jobs = jobs.data if hasattr(jobs, "data") else (jobs or [])
+        due = client.table("vehicles").select("id").eq("owner_id", user["id"]).lte("next_service_date", date.today().isoformat()).execute().data or []
+
+    return {
+        "vehicles": vehicles.count or 0,
+        "active_jobs": sum(1 for j in jobs if j["status"] != "Completed"),
+        "completed_jobs": sum(1 for j in jobs if j["status"] == "Completed"),
+        "due_services": len(due),
+    }
+
+
+@app.post("/api/feedback")
+def leave_feedback(data: FeedbackIn, user=Depends(current_user)):
+    payload = {
+        "user_id": user["id"],
+        "job_id": data.job_id,
+        "rating": data.rating,
+        "comment": data.comment,
+        "created_at": now(),
+    }
+    sb().table("feedback").insert(payload).execute()
+    return {"ok": True, "message": "Thank you for your feedback!"}
+
+
+@app.get("/api/feedback")
+def list_feedback(admin=Depends(admin_only)):
+    data = sb().table("feedback").select("*").order("id", desc=True).limit(50).execute().data or []
+    client = sb()
+    for f in data:
+        u = row(client.table("users").select("name").eq("id", f["user_id"]).limit(1).execute().data)
+        f["customer_name"] = u["name"] if u else "Customer"
+    return data
+
+
+@app.get("/api/admin/vehicle-search")
+def vehicle_search(q: str = "", admin=Depends(admin_only)):
+    q = q.strip().upper()
+    if not q:
+        return []
+    client = sb()
+    data = client.table("vehicles").select("*").ilike("registration_no", f"%{q}%").limit(10).execute().data or []
+    for v in data:
+        owner = row(client.table("users").select("name,email,phone").eq("id", v["owner_id"]).limit(1).execute().data)
+        v["owner_name"] = owner.get("name") if owner else "Customer"
+        active = client.table("service_jobs").select("id,status,token_number,service_type").eq("vehicle_id", v["id"]).neq("status", "Completed").limit(1).execute().data
+        v["active_job"] = row(active)
+    return data
+
+
+@app.get("/api/admin/vehicle/{vehicle_id}/history")
+def admin_vehicle_history(vehicle_id: int, admin=Depends(admin_only)):
+    return vehicle_detail(vehicle_id, admin)
+
+
+@app.get("/api/service-types")
+def service_types(admin=Depends(admin_only)):
+    return {"service_types": SERVICE_TYPES, "stages": STAGES}
+
+
+def local_help(message: str):
+    m = message.lower()
+    if "status" in m or "service" in m:
+        return "Open My Service to see the vehicle's current stage and complete timeline."
+    if "bill" in m or "payment" in m or "report" in m:
+        return "After completion, the service card shows the bill, payment method and service report."
+    if "history" in m:
+        return "Open My Vehicles and click a vehicle to see all previous services."
+    return "I can help with vehicle status, service history, bills, reports, reminders and service updates."
+
+
+@app.post("/api/chat")
+def chat(data: ChatIn, user=Depends(current_user)):
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        return {"reply": local_help(data.message), "mode": "built-in help"}
+    return {"reply": local_help(data.message), "mode": "built-in help"}
+
+
+@app.get("/api/realtime-config")
+def realtime_config(user=Depends(current_user)):
+    # Browser-safe key only. Never expose the service-role key.
+    key = os.getenv("SUPABASE_ANON_KEY") or os.getenv("SUPABASE_PUBLISHABLE_KEY")
+    return {"enabled": bool(SUPABASE_URL and key), "url": SUPABASE_URL if key else None, "anon_key": key if key else None}
+
+
+@app.get("/api/cron/send-reminders")
+def send_reminders(request: Request):
+    secret = os.getenv("CRON_SECRET")
+    if secret and request.headers.get("Authorization") != f"Bearer {secret}":
+        raise HTTPException(401, "Invalid cron authorization")
+
+    client = sb()
+    limit = (date.today() + timedelta(days=30)).isoformat()
+    due = client.table("vehicles").select(
+        "id,owner_id,brand,model,registration_no,next_service_date"
+    ).not_.is_("next_service_date", "null").lte("next_service_date", limit).execute().data or []
+
+    sent = 0
+    for vehicle in due:
+        # Avoid duplicate reminder on the same date.
+        start = datetime.combine(date.today(), datetime.min.time(), tzinfo=timezone.utc).isoformat()
+        already = client.table("notifications").select("id").eq(
+            "user_id", vehicle["owner_id"]
+        ).eq("subject", "Service reminder").gte("created_at", start).limit(1).execute().data
+        if already:
+            continue
+        overdue = vehicle["next_service_date"] < date.today().isoformat()
+        msg = (
+            f"Your {vehicle['brand']} {vehicle['model']} ({vehicle['registration_no']}) "
+            f"service is {'overdue' if overdue else 'due on ' + vehicle['next_service_date']}."
+        )
+        try:
+            notify(vehicle["owner_id"], "Service reminder", msg)
+            sent += 1
+        except Exception:
+            pass
+    return {"ok": True, "reminders_sent": sent}
