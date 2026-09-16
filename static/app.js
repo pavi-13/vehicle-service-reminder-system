@@ -831,25 +831,19 @@ function jobCard(job) {
     const status =
         job.status || "Received";
 
+    const progress =
+        serviceProgress(status);
+
     const timeline =
         job.timeline || [];
 
-    const completed =
-        timeline.filter(
-            item =>
-                item.status === "Completed"
-        ).length;
-
-    const percentage =
-        timeline.length
-            ? Math.round(
-                (completed / timeline.length) * 100
-            )
-            : 0;
-
     return `
 
-        <div class="job-card">
+        <div
+            class="job-card service-clickable-card"
+            onclick="openServiceDetails(${Number(job.id)})"
+            style="cursor:pointer;"
+        >
 
             <div class="job-card-header">
 
@@ -932,10 +926,12 @@ function jobCard(job) {
 
                 <div class="progress-header">
 
-                    <span>Service Progress</span>
+                    <span>
+                        Service Progress
+                    </span>
 
                     <strong>
-                        ${percentage}%
+                        ${progress}%
                     </strong>
 
                 </div>
@@ -944,7 +940,7 @@ function jobCard(job) {
 
                     <div
                         class="progress-fill"
-                        style="width:${percentage}%"
+                        style="width:${progress}%"
                     ></div>
 
                 </div>
@@ -952,84 +948,14 @@ function jobCard(job) {
             </div>
 
 
-            ${renderTimeline(timeline)}
+            <div class="service-card-hint">
+                Click to view service details →
+            </div>
 
-
-            ${
-                job.status === "Completed"
-                    ? `
-                        <div class="completed-box">
-
-                            <strong>
-                                ✓ Service Completed
-                            </strong>
-
-                            <span>
-                                Payment:
-                                ${escapeHtml(
-                                    job.payment_status ||
-                                    "Pending"
-                                )}
-                            </span>
-
-                        </div>
-                    `
-                    : ""
-            }
 
         </div>
 
     `;
-
-}
-
-
-// ============================================================
-// TIMELINE
-// ============================================================
-
-function renderTimeline(timeline) {
-
-    if (!timeline.length) {
-        return "";
-    }
-
-    return `
-
-        <div class="timeline">
-
-            ${timeline.map(item => `
-
-                <div class="timeline-item ${String(item.status || "").toLowerCase()}">
-
-                    <div class="timeline-dot">
-                        ${
-                            item.status === "Completed"
-                                ? "✓"
-                                : ""
-                        }
-                    </div>
-
-                    <div class="timeline-content">
-
-                        <strong>
-                            ${escapeHtml(item.stage)}
-                        </strong>
-
-                        <span>
-                            ${escapeHtml(item.status)}
-                        </span>
-
-                    </div>
-
-                </div>
-
-            `).join("")}
-
-        </div>
-
-    `;
-
 }
 
 
@@ -2201,6 +2127,36 @@ function emptyState(title, message) {
 }
 
 
+function serviceProgress(status) {
+
+    const progressMap = {
+
+        "Received": 10,
+
+        "Inspection": 20,
+
+        "Estimate Approved": 30,
+
+        "In Service": 40,
+
+        "Washing": 50,
+
+        "Engine Oil Change": 60,
+
+        "Repair / Parts": 70,
+
+        "Quality Check": 80,
+
+        "Ready for Pickup": 90,
+
+        "Completed": 100
+
+    };
+
+    return progressMap[status] ?? 0;
+}
+
+
 function statusClass(status) {
 
     const s =
@@ -2378,6 +2334,580 @@ function showToast(
         toast.className = "toast";
 
     }, 3500);
+
+}
+
+
+// ============================================================
+// CUSTOMER SERVICE DETAILS
+// ============================================================
+
+async function openServiceDetails(jobId) {
+
+    try {
+
+        const jobs =
+            await api("/jobs");
+
+        const job =
+            Array.isArray(jobs)
+                ? jobs.find(
+                    item =>
+                        Number(item.id) ===
+                        Number(jobId)
+                )
+                : null;
+
+        if (!job) {
+
+            throw new Error(
+                "Service details not found"
+            );
+
+        }
+
+        const existing =
+            document.getElementById(
+                "serviceDetailsModal"
+            );
+
+        if (existing) {
+            existing.remove();
+        }
+
+
+        const timeline =
+            Array.isArray(job.timeline)
+                ? job.timeline
+                : [];
+
+
+        const progress =
+            serviceProgress(
+                job.status
+            );
+
+
+        const modal =
+            document.createElement("div");
+
+        modal.id =
+            "serviceDetailsModal";
+
+        modal.className =
+            "modal service-details-modal";
+
+
+        modal.innerHTML = `
+
+            <div
+                class="modal-content service-details-content"
+                onclick="event.stopPropagation()"
+            >
+
+                <div class="service-details-header">
+
+                    <div>
+
+                        <span class="job-service-type">
+                            ${escapeHtml(
+                                job.service_type ||
+                                "Service"
+                            )}
+                        </span>
+
+                        <h2>
+                            ${escapeHtml(
+                                job.brand || ""
+                            )}
+                            ${escapeHtml(
+                                job.model || ""
+                            )}
+                        </h2>
+
+                        <p class="registration">
+                            ${escapeHtml(
+                                job.registration_no ||
+                                ""
+                            )}
+                        </p>
+
+                    </div>
+
+                    <button
+                        type="button"
+                        class="modal-close-btn"
+                        onclick="closeServiceDetails()"
+                    >
+                        ×
+                    </button>
+
+                </div>
+
+
+                <div class="service-detail-status">
+
+                    <span>
+                        Current Status
+                    </span>
+
+                    <strong
+                        class="status-pill ${statusClass(
+                            job.status
+                        )}"
+                    >
+                        ${escapeHtml(
+                            job.status ||
+                            "Received"
+                        )}
+                    </strong>
+
+                </div>
+
+
+                <div class="service-detail-progress">
+
+                    <div class="progress-header">
+
+                        <span>
+                            Service Progress
+                        </span>
+
+                        <strong>
+                            ${progress}%
+                        </strong>
+
+                    </div>
+
+                    <div class="progress-bar">
+
+                        <div
+                            class="progress-fill"
+                            style="width:${progress}%"
+                        ></div>
+
+                    </div>
+
+                </div>
+
+
+                <div class="service-detail-grid">
+
+                    <div class="detail-box">
+
+                        <span>Token</span>
+
+                        <strong>
+                            ${escapeHtml(
+                                job.token_number ||
+                                "-"
+                            )}
+                        </strong>
+
+                    </div>
+
+
+                    <div class="detail-box">
+
+                        <span>Check-in</span>
+
+                        <strong>
+                            ${formatDate(
+                                job.check_in_date
+                            )}
+                        </strong>
+
+                    </div>
+
+
+                    <div class="detail-box">
+
+                        <span>Expected Delivery</span>
+
+                        <strong>
+                            ${formatDate(
+                                job.expected_delivery_date
+                            )}
+                        </strong>
+
+                    </div>
+
+
+                    <div class="detail-box">
+
+                        <span>Bill Amount</span>
+
+                        <strong>
+                            ₹${money(
+                                job.bill_amount
+                            )}
+                        </strong>
+
+                    </div>
+
+
+                    <div class="detail-box">
+
+                        <span>Payment</span>
+
+                        <strong>
+                            ${escapeHtml(
+                                job.payment_status ||
+                                "Pending"
+                            )}
+                        </strong>
+
+                    </div>
+
+
+                    <div class="detail-box">
+
+                        <span>Payment Method</span>
+
+                        <strong>
+                            ${escapeHtml(
+                                job.payment_method ||
+                                "Pending"
+                            )}
+                        </strong>
+
+                    </div>
+
+
+                    ${
+                        job.odometer !== null &&
+                        job.odometer !== undefined
+                            ? `
+                                <div class="detail-box">
+
+                                    <span>
+                                        Odometer
+                                    </span>
+
+                                    <strong>
+                                        ${escapeHtml(
+                                            job.odometer
+                                        )} km
+                                    </strong>
+
+                                </div>
+                            `
+                            : ""
+                    }
+
+
+                    ${
+                        job.assigned_executive
+                            ? `
+                                <div class="detail-box">
+
+                                    <span>
+                                        Executive
+                                    </span>
+
+                                    <strong>
+                                        ${escapeHtml(
+                                            job.assigned_executive
+                                        )}
+                                    </strong>
+
+                                </div>
+                            `
+                            : ""
+                    }
+
+                </div>
+
+
+                ${
+                    job.complaint
+                        ? `
+                            <div class="service-detail-section">
+
+                                <h3>
+                                    Customer Complaint
+                                </h3>
+
+                                <p>
+                                    ${escapeHtml(
+                                        job.complaint
+                                    )}
+                                </p>
+
+                            </div>
+                        `
+                        : ""
+                }
+
+
+                ${
+                    job.damage_details
+                        ? `
+                            <div class="service-detail-section">
+
+                                <h3>
+                                    Damage Details
+                                </h3>
+
+                                <p>
+                                    ${escapeHtml(
+                                        job.damage_details
+                                    )}
+                                </p>
+
+                            </div>
+                        `
+                        : ""
+                }
+
+
+                ${
+                    job.insurance_details
+                        ? `
+                            <div class="service-detail-section">
+
+                                <h3>
+                                    Insurance Details
+                                </h3>
+
+                                <p>
+                                    ${escapeHtml(
+                                        job.insurance_details
+                                    )}
+                                </p>
+
+                            </div>
+                        `
+                        : ""
+                }
+
+
+                ${
+                    job.work_done
+                        ? `
+                            <div class="service-detail-section">
+
+                                <h3>
+                                    Work Completed
+                                </h3>
+
+                                <p>
+                                    ${escapeHtml(
+                                        job.work_done
+                                    )}
+                                </p>
+
+                            </div>
+                        `
+                        : ""
+                }
+
+
+                ${
+                    job.technician_notes
+                        ? `
+                            <div class="service-detail-section">
+
+                                <h3>
+                                    Technician Notes
+                                </h3>
+
+                                <p>
+                                    ${escapeHtml(
+                                        job.technician_notes
+                                    )}
+                                </p>
+
+                            </div>
+                        `
+                        : ""
+                }
+
+
+                <div class="service-detail-section">
+
+                    <h3>
+                        Service Timeline
+                    </h3>
+
+                    ${
+                        timeline.length
+                            ? `
+                                <div class="service-detail-timeline">
+
+                                    ${timeline
+                                        .map(
+                                            item => {
+
+                                                const current =
+                                                    String(
+                                                        item.stage ||
+                                                        ""
+                                                    ).toLowerCase() ===
+                                                    String(
+                                                        job.status ||
+                                                        ""
+                                                    ).toLowerCase();
+
+                                                const completed =
+                                                    item.status ===
+                                                    "Completed";
+
+                                                return `
+
+                                                    <div
+                                                        class="service-timeline-row ${
+                                                            completed
+                                                                ? "completed"
+                                                                : current
+                                                                    ? "current"
+                                                                    : ""
+                                                        }"
+                                                    >
+
+                                                        <div
+                                                            class="service-timeline-dot"
+                                                        >
+                                                            ${
+                                                                completed
+                                                                    ? "✓"
+                                                                    : ""
+                                                            }
+                                                        </div>
+
+                                                        <div
+                                                            class="service-timeline-info"
+                                                        >
+
+                                                            <strong>
+                                                                ${escapeHtml(
+                                                                    item.stage ||
+                                                                    ""
+                                                                )}
+                                                            </strong>
+
+                                                            <span>
+                                                                ${escapeHtml(
+                                                                    item.status ||
+                                                                    "Pending"
+                                                                )}
+                                                            </span>
+
+                                                            ${
+                                                                item.notes
+                                                                    ? `
+                                                                        <small>
+                                                                            ${escapeHtml(
+                                                                                item.notes
+                                                                            )}
+                                                                        </small>
+                                                                    `
+                                                                    : ""
+                                                            }
+
+                                                        </div>
+
+                                                    </div>
+
+                                                `;
+
+                                            }
+                                        )
+                                        .join("")}
+
+                                </div>
+                            `
+                            : `
+                                <p class="muted">
+                                    Service timeline is not available yet.
+                                </p>
+                            `
+                    }
+
+                </div>
+
+
+                <div class="service-details-footer">
+
+                    <button
+                        type="button"
+                        class="secondary-btn"
+                        onclick="closeServiceDetails()"
+                    >
+                        Close
+                    </button>
+
+                </div>
+
+            </div>
+
+        `;
+
+
+        modal.addEventListener(
+            "click",
+            event => {
+
+                if (
+                    event.target ===
+                    modal
+                ) {
+
+                    closeServiceDetails();
+
+                }
+
+            }
+        );
+
+
+        document.body.appendChild(
+            modal
+        );
+
+
+        requestAnimationFrame(() => {
+
+            modal.classList.add(
+                "show"
+            );
+
+        });
+
+
+    } catch (error) {
+
+        showToast(
+            error.message ||
+            "Unable to load service details",
+            "error"
+        );
+
+    }
+
+}
+
+
+function closeServiceDetails() {
+
+    const modal =
+        document.getElementById(
+            "serviceDetailsModal"
+        );
+
+    if (modal) {
+
+        modal.classList.remove(
+            "show"
+        );
+
+        setTimeout(() => {
+
+            modal.remove();
+
+        }, 200);
+
+    }
 
 }
 
