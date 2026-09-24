@@ -644,6 +644,15 @@ def list_feedback(admin=Depends(admin_only)):
     return data
 
 
+@app.get("/api/feedback/my")
+def my_feedback(job_id: Optional[int] = None, user=Depends(current_user)):
+    """Feedback submitted by the logged-in customer (optionally for one service job)."""
+    query = sb().table("feedback").select("*").eq("user_id", user["id"])
+    if job_id is not None:
+        query = query.eq("job_id", job_id)
+    return query.order("id", desc=True).limit(20).execute().data or []
+
+
 @app.get("/api/admin/vehicle-search")
 def vehicle_search(q: str = "", admin=Depends(admin_only)):
     q = q.strip().upper()

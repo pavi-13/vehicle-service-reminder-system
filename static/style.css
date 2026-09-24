@@ -2531,3 +2531,117 @@ button{
     }
 
 }
+
+/* =========================================================
+   CUSTOMER FEEDBACK
+   ========================================================= */
+
+.feedback-action-btn {
+    width: 100%;
+    margin-top: 14px;
+    padding: 11px 16px;
+    border: 0;
+    border-radius: 11px;
+    background: var(--lime, #c8f36a);
+    color: var(--ink, #13231d);
+    font-weight: 700;
+    font-size: 14px;
+    cursor: pointer;
+    transition: transform .18s ease, box-shadow .18s ease;
+}
+
+.feedback-action-btn:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 8px 20px rgba(125, 168, 67, .28);
+}
+
+.feedback-form-content {
+    width: min(520px, 100%);
+    max-height: 90vh;
+    overflow-y: auto;
+    background: #ffffff;
+    border-radius: 22px;
+    padding: 28px;
+    box-shadow: 0 25px 70px rgba(0, 0, 0, 0.18);
+}
+
+.feedback-form-content label {
+    display: block;
+    margin: 14px 0 8px;
+    font-weight: 600;
+    font-size: 14px;
+}
+
+.feedback-form-content textarea {
+    width: 100%;
+    resize: vertical;
+    font-family: inherit;
+}
+
+.feedback-rating-input {
+    display: flex;
+    gap: 8px;
+}
+
+.rating-star {
+    width: 46px;
+    height: 46px;
+    border: 1px solid #e6ebe3;
+    border-radius: 12px;
+    background: #f5f8f3;
+    color: #b8c2b3;
+    font-size: 26px;
+    line-height: 1;
+    cursor: pointer;
+    transition: transform .15s ease, color .15s ease, background .15s ease;
+}
+
+.rating-star:hover {
+    transform: scale(1.08);
+}
+
+.rating-star.selected {
+    background: #fff7dc;
+    border-color: #f2d06b;
+    color: #f5a800;
+}
+
+.feedback-form-content .modal-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+    margin-top: 18px;
+}
+
+.service-feedback-box {
+    padding: 14px 16px;
+    border: 1px solid #e6ebe3;
+    border-radius: 12px;
+    background: #ffffff;
+}
+
+.service-feedback-rating {
+    color: #f5a800;
+    font-size: 22px;
+    letter-spacing: 3px;
+    margin-bottom: 6px;
+}
+
+.service-feedback-box p {
+    margin: 0 0 8px;
+}
+
+.feedback-inline-btn {
+    margin-top: 12px;
+}
+
+@media (max-width: 480px) {
+    .feedback-form-content {
+        padding: 18px;
+    }
+
+    .rating-star {
+        width: 42px;
+        height: 42px;
+    }
+}
