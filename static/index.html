@@ -1,0 +1,1062 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1.0"
+    >
+
+    <title>VehicleCare</title>
+
+    <link
+        rel="stylesheet"
+        href="/static/style.css"
+    >
+</head>
+
+<body>
+
+<div id="app">
+
+    <!-- =====================================================
+         LOGIN / REGISTER
+         ===================================================== -->
+
+    <section id="authScreen" class="auth-screen">
+
+        <div class="auth-card">
+
+            <div class="brand-block">
+                <div class="brand-logo">VC</div>
+
+                <h1>VehicleCare</h1>
+
+                <p>
+                    Smart vehicle service & reminder system
+                </p>
+            </div>
+
+            <div class="auth-tabs">
+
+                <button
+                    id="loginTab"
+                    class="auth-tab active"
+                    onclick="showAuth('login')"
+                >
+                    Login
+                </button>
+
+                <button
+                    id="registerTab"
+                    class="auth-tab"
+                    onclick="showAuth('register')"
+                >
+                    Create Account
+                </button>
+
+            </div>
+
+            <!-- LOGIN -->
+
+            <form
+                id="loginForm"
+                onsubmit="login(event)"
+            >
+
+                <label>Email / Mobile</label>
+
+                <input
+                    id="loginIdentifier"
+                    type="text"
+                    placeholder="Enter email or mobile number"
+                    required
+                >
+
+                <label>Password</label>
+
+                <input
+                    id="loginPassword"
+                    type="password"
+                    placeholder="Enter password"
+                    required
+                >
+
+                <button
+                    class="primary-btn full"
+                    type="submit"
+                >
+                    Login
+                </button>
+
+                <div
+                    id="loginMessage"
+                    class="form-message"
+                ></div>
+
+            </form>
+
+            <!-- REGISTER -->
+
+            <form
+                id="registerForm"
+                class="hidden"
+                onsubmit="register(event)"
+            >
+
+                <label>Name</label>
+
+                <input
+                    id="registerName"
+                    type="text"
+                    placeholder="Your name"
+                    required
+                >
+
+                <label>Email</label>
+
+                <input
+                    id="registerEmail"
+                    type="email"
+                    placeholder="you@example.com"
+                >
+
+                <label>Mobile Number</label>
+
+                <input
+                    id="registerPhone"
+                    type="text"
+                    placeholder="+91XXXXXXXXXX"
+                >
+
+                <label>Password</label>
+
+                <input
+                    id="registerPassword"
+                    type="password"
+                    placeholder="Minimum 6 characters"
+                    minlength="6"
+                    required
+                >
+
+                <button
+                    class="primary-btn full"
+                    type="submit"
+                >
+                    Create Account
+                </button>
+
+                <div
+                    id="registerMessage"
+                    class="form-message"
+                ></div>
+
+            </form>
+
+        </div>
+
+    </section>
+
+
+    <!-- =====================================================
+         MAIN APP
+         ===================================================== -->
+
+    <section
+        id="mainScreen"
+        class="main-screen hidden"
+    >
+
+        <!-- SIDEBAR -->
+
+        <aside class="sidebar">
+
+            <div class="sidebar-brand">
+
+                <div class="brand-logo small">
+                    VC
+                </div>
+
+                <div>
+                    <strong>VehicleCare</strong>
+                    <small>Service Center</small>
+                </div>
+
+            </div>
+
+
+            <nav>
+
+                <button
+                    class="nav-item active"
+                    data-page="dashboard"
+                    onclick="navigate('dashboard')"
+                >
+                    <span>⌂</span>
+                    Dashboard
+                </button>
+
+                <button
+                    class="nav-item"
+                    data-page="vehicles"
+                    onclick="navigate('vehicles')"
+                >
+                    <span>🚗</span>
+                    My Vehicles
+                </button>
+
+                <button
+                    class="nav-item"
+                    data-page="services"
+                    onclick="navigate('services')"
+                >
+                    <span>🔧</span>
+                    My Service
+                </button>
+
+                <button
+                    class="nav-item"
+                    data-page="notifications"
+                    onclick="navigate('notifications')"
+                >
+                    <span>🔔</span>
+                    Notifications
+                    <span
+                        id="notificationBadge"
+                        class="badge hidden"
+                    >
+                        0
+                    </span>
+                </button>
+
+                <button
+                    id="adminServiceNav"
+                    class="nav-item hidden"
+                    data-page="admin"
+                    onclick="navigate('admin')"
+                >
+                    <span>🛠️</span>
+                    Service Desk
+                </button>
+
+                <button
+                    id="adminFeedbackNav"
+                    class="nav-item hidden"
+                    data-page="feedback"
+                    onclick="navigate('feedback')"
+                >
+                    <span>⭐</span>
+                    Feedback
+                </button>
+
+            </nav>
+
+
+            <div class="sidebar-bottom">
+
+                <div class="user-mini">
+
+                    <div
+                        id="userAvatar"
+                        class="avatar"
+                    >
+                        U
+                    </div>
+
+                    <div>
+                        <strong id="sidebarUserName">
+                            User
+                        </strong>
+
+                        <small id="sidebarUserRole">
+                            Customer
+                        </small>
+                    </div>
+
+                </div>
+
+                <button
+                    class="logout-btn"
+                    onclick="logout()"
+                >
+                    Logout
+                </button>
+
+            </div>
+
+        </aside>
+
+
+        <!-- CONTENT -->
+
+        <main class="content">
+
+            <header class="topbar">
+
+                <div>
+
+                    <h2 id="pageTitle">
+                        Dashboard
+                    </h2>
+
+                    <p id="pageSubtitle">
+                        Welcome to VehicleCare
+                    </p>
+
+                </div>
+
+                <div class="topbar-user">
+
+                    <span id="topUserName">
+                        User
+                    </span>
+
+                    <div
+                        id="topAvatar"
+                        class="avatar"
+                    >
+                        U
+                    </div>
+
+                </div>
+
+            </header>
+
+
+            <!-- =================================================
+                 DASHBOARD
+                 ================================================= -->
+
+            <section
+                id="page-dashboard"
+                class="page"
+            >
+
+                <div
+                    id="dashboardStats"
+                    class="stats-grid"
+                ></div>
+
+                <div class="section-header">
+
+                    <div>
+                        <h3>Recent Service</h3>
+                        <p>Your latest vehicle service activity</p>
+                    </div>
+
+                    <button
+                        class="secondary-btn"
+                        onclick="navigate('services')"
+                    >
+                        View All
+                    </button>
+
+                </div>
+
+                <div
+                    id="dashboardJobs"
+                    class="job-grid"
+                ></div>
+
+            </section>
+
+
+            <!-- =================================================
+                 VEHICLES
+                 ================================================= -->
+
+            <section
+                id="page-vehicles"
+                class="page hidden"
+            >
+
+                <div class="section-header">
+
+                    <div>
+                        <h3>My Vehicles</h3>
+                        <p>
+                            Manage your registered vehicles
+                        </p>
+                    </div>
+
+                    <button
+                        class="primary-btn"
+                        onclick="openVehicleModal()"
+                    >
+                        + Add Vehicle
+                    </button>
+
+                </div>
+
+                <div
+                    id="vehiclesGrid"
+                    class="vehicle-grid"
+                ></div>
+
+            </section>
+
+
+            <!-- =================================================
+                 SERVICES
+                 ================================================= -->
+
+            <section
+                id="page-services"
+                class="page hidden"
+            >
+
+                <div class="section-header">
+
+                    <div>
+                        <h3>My Service</h3>
+                        <p>
+                            Track your vehicle service status
+                        </p>
+                    </div>
+
+                </div>
+
+                <div
+                    id="servicesGrid"
+                    class="job-grid"
+                ></div>
+
+            </section>
+
+
+            <!-- =================================================
+                 NOTIFICATIONS
+                 ================================================= -->
+
+            <section
+                id="page-notifications"
+                class="page hidden"
+            >
+
+                <div class="section-header">
+
+                    <div>
+                        <h3>Notifications</h3>
+                        <p>
+                            Service updates and reminders
+                        </p>
+                    </div>
+
+                    <button
+                        class="secondary-btn"
+                        onclick="markNotificationsRead()"
+                    >
+                        Mark all as read
+                    </button>
+
+                </div>
+
+                <div
+                    id="notificationsList"
+                    class="notifications-list"
+                ></div>
+
+            </section>
+
+
+            <!-- =================================================
+                 ADMIN SERVICE DESK
+                 ================================================= -->
+
+            <section
+                id="page-admin"
+                class="page hidden"
+            >
+
+                <div class="section-header">
+
+                    <div>
+                        <h3>Service Desk</h3>
+                        <p>
+                            Search vehicle and start service intake
+                        </p>
+                    </div>
+
+                </div>
+
+
+                <!-- VEHICLE SEARCH -->
+
+                <div class="panel">
+
+                    <h3>Search Vehicle</h3>
+
+                    <div class="search-row">
+
+                        <input
+                            id="adminVehicleSearch"
+                            type="text"
+                            placeholder="Enter registration number"
+                            onkeydown="if(event.key==='Enter') searchAdminVehicle()"
+                        >
+
+                        <button
+                            class="primary-btn"
+                            onclick="searchAdminVehicle()"
+                        >
+                            Search
+                        </button>
+
+                    </div>
+
+                    <div
+                        id="adminSearchResults"
+                        class="search-results"
+                    ></div>
+
+                </div>
+
+
+                <!-- ACTIVE JOBS -->
+
+                <div class="section-header admin-jobs-header">
+
+                    <div>
+                        <h3>Active Services</h3>
+                        <p>Currently serviced vehicles</p>
+                    </div>
+
+                </div>
+
+                <div
+                    id="adminJobsGrid"
+                    class="job-grid"
+                ></div>
+
+            </section>
+
+
+            <!-- =================================================
+                 FEEDBACK
+                 ================================================= -->
+
+            <section
+                id="page-feedback"
+                class="page hidden"
+            >
+
+                <div class="section-header">
+
+                    <div>
+                        <h3>Customer Feedback</h3>
+                        <p>Recent service ratings</p>
+                    </div>
+
+                </div>
+
+                <div
+                    id="feedbackList"
+                    class="feedback-list"
+                ></div>
+
+            </section>
+
+        </main>
+
+    </section>
+
+</div>
+
+
+<!-- =========================================================
+     VEHICLE MODAL
+     ========================================================= -->
+
+<div
+    id="vehicleModal"
+    class="modal hidden"
+>
+
+    <div class="modal-card">
+
+        <div class="modal-header">
+
+            <div>
+                <h3>Add Vehicle</h3>
+                <p>Register your vehicle</p>
+            </div>
+
+            <button
+                class="modal-close"
+                onclick="closeModal('vehicleModal')"
+            >
+                ×
+            </button>
+
+        </div>
+
+
+        <form onsubmit="addVehicle(event)">
+
+            <div class="form-grid">
+
+                <div>
+                    <label>Vehicle Type</label>
+
+                    <select id="vehicleType">
+                        <option>Car</option>
+                        <option>Bike</option>
+                        <option>SUV</option>
+                        <option>Van</option>
+                        <option>Other</option>
+                    </select>
+                </div>
+
+                <div>
+                    <label>Brand</label>
+
+                    <input
+                        id="vehicleBrand"
+                        type="text"
+                        placeholder="Toyota"
+                        required
+                    >
+                </div>
+
+                <div>
+                    <label>Model</label>
+
+                    <input
+                        id="vehicleModel"
+                        type="text"
+                        placeholder="Fortuner"
+                        required
+                    >
+                </div>
+
+                <div>
+                    <label>Registration Number</label>
+
+                    <input
+                        id="vehicleRegistration"
+                        type="text"
+                        placeholder="TN01AB1234"
+                        required
+                    >
+                </div>
+
+                <div>
+                    <label>Year</label>
+
+                    <input
+                        id="vehicleYear"
+                        type="number"
+                        min="1900"
+                        max="2100"
+                    >
+                </div>
+
+                <div>
+                    <label>Last Service Date</label>
+
+                    <input
+                        id="vehicleLastService"
+                        type="date"
+                    >
+                </div>
+
+                <div>
+                    <label>Next Service Date</label>
+
+                    <input
+                        id="vehicleNextService"
+                        type="date"
+                    >
+                </div>
+
+            </div>
+
+            <label>Notes</label>
+
+            <textarea
+                id="vehicleNotes"
+                placeholder="Additional vehicle notes"
+            ></textarea>
+
+            <div class="modal-actions">
+
+                <button
+                    type="button"
+                    class="secondary-btn"
+                    onclick="closeModal('vehicleModal')"
+                >
+                    Cancel
+                </button>
+
+                <button
+                    type="submit"
+                    class="primary-btn"
+                >
+                    Add Vehicle
+                </button>
+
+            </div>
+
+        </form>
+
+    </div>
+
+</div>
+
+
+<!-- =========================================================
+     SERVICE INTAKE MODAL
+     ========================================================= -->
+
+<div
+    id="serviceModal"
+    class="modal hidden"
+>
+
+    <div class="modal-card large">
+
+        <div class="modal-header">
+
+            <div>
+                <h3>Service Intake</h3>
+                <p id="intakeVehicleTitle">
+                    Start service
+                </p>
+            </div>
+
+            <button
+                class="modal-close"
+                onclick="closeModal('serviceModal')"
+            >
+                ×
+            </button>
+
+        </div>
+
+
+        <form onsubmit="createService(event)">
+
+            <input
+                id="intakeVehicleId"
+                type="hidden"
+            >
+
+            <div class="form-grid">
+
+                <div>
+                    <label>Service Type</label>
+
+                    <select id="intakeServiceType">
+
+                        <option>General Service</option>
+                        <option>Damage Repair</option>
+                        <option>Insurance Claim</option>
+                        <option>Accident Repair</option>
+                        <option>Engine / Mechanical</option>
+                        <option>Body & Paint</option>
+                        <option>AC / Electrical</option>
+
+                    </select>
+                </div>
+
+                <div>
+                    <label>Check-in Date</label>
+
+                    <input
+                        id="intakeCheckIn"
+                        type="date"
+                        required
+                    >
+                </div>
+
+                <div>
+                    <label>Expected Delivery</label>
+
+                    <input
+                        id="intakeDelivery"
+                        type="date"
+                    >
+                </div>
+
+                <div>
+                    <label>Odometer</label>
+
+                    <input
+                        id="intakeOdometer"
+                        type="number"
+                        placeholder="45000"
+                    >
+                </div>
+
+                <div>
+                    <label>Estimate Amount</label>
+
+                    <input
+                        id="intakeEstimate"
+                        type="number"
+                        step="0.01"
+                        value="0"
+                    >
+                </div>
+
+                <div>
+                    <label>Assigned Executive</label>
+
+                    <input
+                        id="intakeExecutive"
+                        type="text"
+                        placeholder="Executive name"
+                    >
+                </div>
+
+            </div>
+
+
+            <label>Customer Complaint</label>
+
+            <textarea
+                id="intakeComplaint"
+                placeholder="Customer reported issue..."
+            ></textarea>
+
+
+            <label>Damage Details</label>
+
+            <textarea
+                id="intakeDamage"
+                placeholder="Damage / accident details..."
+            ></textarea>
+
+
+            <label>Insurance Details</label>
+
+            <textarea
+                id="intakeInsurance"
+                placeholder="Insurance company / claim number..."
+            ></textarea>
+
+
+            <div class="modal-actions">
+
+                <button
+                    type="button"
+                    class="secondary-btn"
+                    onclick="closeModal('serviceModal')"
+                >
+                    Cancel
+                </button>
+
+                <button
+                    type="submit"
+                    class="primary-btn"
+                >
+                    Generate Token & Start Service
+                </button>
+
+            </div>
+
+        </form>
+
+    </div>
+
+</div>
+
+
+<!-- =========================================================
+     JOB UPDATE MODAL
+     ========================================================= -->
+
+<div
+    id="jobModal"
+    class="modal hidden"
+>
+
+    <div class="modal-card large">
+
+        <div class="modal-header">
+
+            <div>
+                <h3>Update Service</h3>
+                <p id="jobModalVehicle">
+                    Service details
+                </p>
+            </div>
+
+            <button
+                class="modal-close"
+                onclick="closeModal('jobModal')"
+            >
+                ×
+            </button>
+
+        </div>
+
+
+        <form onsubmit="updateJob(event)">
+
+            <input
+                id="jobUpdateId"
+                type="hidden"
+            >
+
+            <div class="form-grid">
+
+                <div>
+                    <label>Status</label>
+
+                    <select id="jobStatus">
+
+                        <option>Received</option>
+                        <option>Inspection</option>
+                        <option>Estimate Approved</option>
+                        <option>In Service</option>
+                        <option>Washing</option>
+                        <option>Engine Oil Change</option>
+                        <option>Repair / Parts</option>
+                        <option>Quality Check</option>
+                        <option>Ready for Pickup</option>
+                        <option>Completed</option>
+
+                    </select>
+                </div>
+
+                <div>
+                    <label>Bill Amount</label>
+
+                    <input
+                        id="jobBill"
+                        type="number"
+                        step="0.01"
+                    >
+                </div>
+
+                <div>
+                    <label>Payment Method</label>
+
+                    <select id="jobPaymentMethod">
+
+                        <option>Pending</option>
+                        <option>Cash</option>
+                        <option>Online</option>
+
+                    </select>
+                </div>
+
+                <div>
+                    <label>Payment Status</label>
+
+                    <select id="jobPaymentStatus">
+
+                        <option>Pending</option>
+                        <option>Paid</option>
+                        <option>Failed</option>
+
+                    </select>
+                </div>
+
+                <div>
+                    <label>Next Service Date</label>
+
+                    <input
+                        id="jobNextService"
+                        type="date"
+                    >
+                </div>
+
+            </div>
+
+
+            <label>Work Done / Service Report</label>
+
+            <textarea
+                id="jobWorkDone"
+                placeholder="Work completed..."
+            ></textarea>
+
+
+            <label>Technician Notes</label>
+
+            <textarea
+                id="jobTechnicianNotes"
+                placeholder="Technician notes..."
+            ></textarea>
+
+
+            <div class="modal-actions">
+
+                <button
+                    type="button"
+                    class="secondary-btn"
+                    onclick="closeModal('jobModal')"
+                >
+                    Cancel
+                </button>
+
+                <button
+                    type="submit"
+                    class="primary-btn"
+                >
+                    Save Update
+                </button>
+
+            </div>
+
+        </form>
+
+    </div>
+
+</div>
+
+
+<!-- =========================================================
+     VEHICLE HISTORY MODAL
+     ========================================================= -->
+
+<div
+    id="historyModal"
+    class="modal hidden"
+>
+
+    <div class="modal-card extra-large">
+
+        <div class="modal-header">
+
+            <div>
+                <h3>Vehicle History</h3>
+                <p id="historyVehicleTitle"></p>
+            </div>
+
+            <button
+                class="modal-close"
+                onclick="closeModal('historyModal')"
+            >
+                ×
+            </button>
+
+        </div>
+
+        <div
+            id="historyContent"
+            class="history-content"
+        ></div>
+
+    </div>
+
+</div>
+
+
+<!-- =========================================================
+     TOAST
+     ========================================================= -->
+
+<div
+    id="toast"
+    class="toast"
+></div>
+
+
+<script src="/static/app.js"></script>
+
+</body>
+</html>
